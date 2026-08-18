@@ -20,4 +20,16 @@ data class ColoringTemplate(
      * procedurally-drawn template, which has no such "finished" reference to show.
      */
     val referenceAssetPath: String? = null,
+    /**
+     * Private-storage counterpart to [referenceAssetPath], for templates generated on-device from
+     * a user's own photo (see canvas/PhotoConverter.kt + model/UserPhotoTemplateRepository.kt):
+     * an *absolute file path* to the full-color reference bitmap, loaded via
+     * [com.vellum.studio.util.FileBitmapCache] (BitmapFactory.decodeFile) instead of
+     * [com.vellum.studio.util.AssetBitmapCache]'s context.assets stream, since these bitmaps live
+     * in app-private storage rather than the bundled assets/ folder and can be created/deleted at
+     * runtime rather than being fixed at build time. A template should set at most one of
+     * [referenceAssetPath] / [referenceFilePath] -- both null means no "View Original" reference
+     * to show (every procedurally-drawn template).
+     */
+    val referenceFilePath: String? = null,
 )
