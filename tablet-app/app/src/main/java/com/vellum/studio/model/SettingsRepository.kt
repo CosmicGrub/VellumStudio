@@ -1,0 +1,65 @@
+package com.vellum.studio.model
+
+import android.content.Context
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
+
+/**
+ * Small, app-wide settings store backed by [android.content.SharedPreferences] — a plain
+ * key/value store is the right tool here (unlike the JSON-file repositories elsewhere in
+ * `model/`) since this holds a handful of independent flags, not a structured document.
+ * Compose-observable so a toggle in SettingsScreen and a read in EditorScreen both see the same
+ * live value without needing a manual refresh.
+ */
+class SettingsRepository(context: Context) {
+    private val prefs = context.applicationContext.getSharedPreferences("vellum_settings", Context.MODE_PRIVATE)
+
+    // A plain `by mutableStateOf(...)` delegated property can't also carry a custom setter (no
+    // backing `field` exists once delegation handles get/set) -- so this is a regular property
+    // with explicit accessors wrapping a private MutableState instead, giving both Compose
+    // observability and SharedPreferences persistence on write.
+    private val gpuCompositorState = mutableStateOf(prefs.getBoolean(KEY_GPU_COMPOSITOR, false))
+
+    /**
+     * Experimental GPU-accelerated layer compositor (see
+     * [com.vellum.studio.canvas.gl.LayerCompositorGLView]) — off by default. Only ever affects
+     * the idle/no-active-stroke view; the live-stroke software rendering path is unconditional
+     * and unaffected either way.
+     */
+    var experimentalGpuCompositor: Boolean
+        get() = gpuCompositorState.value
+        set(value) {
+            gpuCompositorState.value = value
+            prefs.edit().putBoolean(KEY_GPU_COMPOSITOR, value).apply()
+        }
+
+    private val paperTextureEnabledState = mutableStateOf(prefs.getBoolean(KEY_PAPER_TEXTURE_ENABLED, false))
+    private val paperTextureStrengthState = mutableStateOf(prefs.getFloat(KEY_PAPER_TEXTURE_STRENGTH, 0.35f))
+
+    /**
+     * Subtle tileable paper-grain texture, multiplied over the composited canvas (see
+     * [com.vellum.studio.canvas.PaperTexture]) — off by default so no existing project's look
+     * changes without the user opting in.
+     */
+    var paperTextureEnabled: Boolean
+        get() = paperTextureEnabledState.value
+        set(value) {
+            paperTextureEnabledState.value = value
+            prefs.edit().putBoolean(KEY_PAPER_TEXTURE_ENABLED, value).apply()
+        }
+
+    /** How strongly the grain shows through, 0..1. Only meaningful while [paperTextureEnabled]. */
+    var paperTextureStrength: Float
+        get() = paperTextureStrengthState.value
+        set(value) {
+            paperTextureStrengthState.value = value
+            prefs.edit().putFloat(KEY_PAPER_TEXTURE_STRENGTH, value).apply()
+        }
+
+    private companion object {
+        const val KEY_GPU_COMPOSITOR = "experimental_gpu_compositor"
+        const val KEY_PAPER_TEXTURE_ENABLED = "paper_texture_enabled"
+        const val KEY_PAPER_TEXTURE_STRENGTH = "paper_texture_strength"
+    }
+}
