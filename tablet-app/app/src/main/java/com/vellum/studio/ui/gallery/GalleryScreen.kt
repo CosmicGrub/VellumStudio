@@ -7,6 +7,8 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.aspectRatio
@@ -230,7 +232,7 @@ private fun ThumbnailImage(file: File?, modifier: Modifier = Modifier) {
     }
 }
 
-@OptIn(ExperimentalMaterial3Api::class)
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
 @Composable
 private fun NewCanvasDialog(onDismiss: () -> Unit, onCreate: (String, CanvasSizePreset) -> Unit) {
     var name by remember { mutableStateOf("Untitled") }
@@ -246,15 +248,18 @@ private fun NewCanvasDialog(onDismiss: () -> Unit, onCreate: (String, CanvasSize
             Column {
                 OutlinedTextField(value = name, onValueChange = { name = it }, label = { Text("Name") }, singleLine = true)
                 Text("Canvas size", style = MaterialTheme.typography.labelLarge, modifier = Modifier.padding(top = 16.dp, bottom = 8.dp))
-                availablePresets.chunked(2).forEach { row ->
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        row.forEach { preset ->
-                            FilterChip(
-                                selected = selected == preset,
-                                onClick = { selected = preset },
-                                label = { Text(preset.label, style = MaterialTheme.typography.labelSmall) },
-                            )
-                        }
+                // FlowRow (not a fixed 2-per-row chunk) so chips pack as many per line as actually
+                // fit and wrap individually otherwise -- on a narrow width (e.g. the Z Fold5's
+                // cover screen) a long label like "Tablet Screen · 1440×2304" gets its own
+                // line instead of being squeezed into a half-width slot and wrapping into an
+                // unreadable single-word column.
+                FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    availablePresets.forEach { preset ->
+                        FilterChip(
+                            selected = selected == preset,
+                            onClick = { selected = preset },
+                            label = { Text(preset.label, style = MaterialTheme.typography.labelSmall) },
+                        )
                     }
                 }
             }
