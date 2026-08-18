@@ -24,6 +24,7 @@ class MainActivity : ComponentActivity() {
                     academyProgressRepository = app.academyProgressRepository,
                     settingsRepository = app.settingsRepository,
                     customBrushRepository = app.customBrushRepository,
+                    userPhotoTemplateRepository = app.userPhotoTemplateRepository,
                 )
             }
         }
