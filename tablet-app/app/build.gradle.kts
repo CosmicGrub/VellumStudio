@@ -102,6 +102,23 @@ dependencies {
     // zero API cost -- satisfies the project's "cost-free AI" constraint.
     implementation("org.opencv:opencv:4.14.0")
 
+    // On-device pose detection for the "Pose Reference Overlay" figure-drawing teaching aid
+    // (canvas/PoseOverlay.kt): draws a non-destructive skeleton overlay on top of an imported
+    // reference-photo layer, purely in DrawingCanvasView's onDraw() -- never touches layer pixels.
+    // This is the BUNDLED artifact (as opposed to the Play-Services-unbundled
+    // com.google.android.gms:play-services-mlkit-pose-detection, which downloads its model on
+    // first use over the network) -- the model ships inside this AAR itself, so detection runs
+    // fully offline with zero network calls and zero API cost, satisfying the project's
+    // "cost-free AI" constraint outright with no separate download step to reason about. The
+    // "-accurate" variant (vs. the streaming-tuned base model) is the right choice since this
+    // always runs once against a single still reference image, never a live camera feed. Verified
+    // the coordinate + version list directly against the Google Maven group index
+    // (dl.google.com/dl/android/maven2/com/google/mlkit/pose-detection-accurate/maven-metadata.xml)
+    // on 2026-08-18: latest STABLE release is 17.0.0 (18.0.0-beta5 also exists but is a
+    // prerelease) -- pinned to the stable line deliberately, same reasoning as the OpenCV pin
+    // above.
+    implementation("com.google.mlkit:pose-detection-accurate:17.0.0")
+
     debugImplementation("androidx.compose.ui:ui-tooling")
     debugImplementation("androidx.compose.ui:ui-test-manifest")
 }

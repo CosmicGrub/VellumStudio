@@ -68,7 +68,7 @@ class ProjectRepository(private val appContext: Context) {
             heightPx = heightPx,
             createdAt = now,
             updatedAt = now,
-            layers = engine.layers.mapIndexed { i, l -> LayerMeta(l.id, l.name, l.opacity, l.visible, l.blendMode.label, i, l.locked) },
+            layers = engine.layers.mapIndexed { i, l -> LayerMeta(l.id, l.name, l.opacity, l.visible, l.blendMode.label, i, l.locked, l.isReferenceImage) },
             activeLayerIndex = engine.activeLayerIndex,
         )
         dirFor(id).mkdirs()
@@ -101,7 +101,7 @@ class ProjectRepository(private val appContext: Context) {
             heightPx = canvasSize,
             createdAt = now,
             updatedAt = now,
-            layers = engine.layers.mapIndexed { i, l -> LayerMeta(l.id, l.name, l.opacity, l.visible, l.blendMode.label, i, l.locked) },
+            layers = engine.layers.mapIndexed { i, l -> LayerMeta(l.id, l.name, l.opacity, l.visible, l.blendMode.label, i, l.locked, l.isReferenceImage) },
             activeLayerIndex = engine.activeLayerIndex,
         )
         dirFor(id).mkdirs()
@@ -135,6 +135,7 @@ class ProjectRepository(private val appContext: Context) {
                     visible = lm.visible,
                     blendMode = LayerBlendMode.fromLabel(lm.blendMode),
                     locked = lm.locked,
+                    isReferenceImage = lm.isReferenceImage,
                 ),
             )
         }
@@ -146,7 +147,7 @@ class ProjectRepository(private val appContext: Context) {
     suspend fun saveProject(meta: ProjectMeta, engine: CanvasEngine): ProjectMeta = withContext(Dispatchers.IO) {
         val updated = meta.copy(
             updatedAt = System.currentTimeMillis(),
-            layers = engine.layers.mapIndexed { i, l -> LayerMeta(l.id, l.name, l.opacity, l.visible, l.blendMode.label, i, l.locked) },
+            layers = engine.layers.mapIndexed { i, l -> LayerMeta(l.id, l.name, l.opacity, l.visible, l.blendMode.label, i, l.locked, l.isReferenceImage) },
             activeLayerIndex = engine.activeLayerIndex,
         )
         persist(updated, engine)
