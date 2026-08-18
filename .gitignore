@@ -1,0 +1,36 @@
+# --- Android / Gradle (tablet-app) ---
+tablet-app/**/build/
+tablet-app/.gradle/
+tablet-app/.kotlin/
+tablet-app/local.properties
+tablet-app/**/.cxx/
+*.apk
+*.aab
+*.ap_
+*.dex
+captures/
+.externalNativeBuild/
+
+# --- Android Studio / IntelliJ ---
+.idea/
+*.iml
+.DS_Store
+
+# --- .NET / WPF (pc-companion) ---
+pc-companion/**/bin/
+pc-companion/**/obj/
+*.user
+
+# --- Python (tools/masterart_pipeline) ---
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# --- Visual Studio / VS Code ---
+.vs/
+.vscode/
+
+# --- Misc ---
+*.log
+Thumbnails.db

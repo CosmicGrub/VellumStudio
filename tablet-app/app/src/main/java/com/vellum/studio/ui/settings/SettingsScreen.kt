@@ -1,0 +1,141 @@
+package com.vellum.studio.ui.settings
+
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.ArrowBack
+import androidx.compose.material3.Card
+import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Slider
+import androidx.compose.material3.Switch
+import androidx.compose.material3.Text
+import androidx.compose.material3.TopAppBar
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.unit.dp
+import com.vellum.studio.BuildConfig
+import com.vellum.studio.model.SettingsRepository
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun SettingsScreen(settingsRepository: SettingsRepository, onBack: () -> Unit) {
+    Scaffold(
+        topBar = {
+            TopAppBar(
+                title = { Text("Settings") },
+                navigationIcon = { IconButton(onClick = onBack) { Icon(Icons.Filled.ArrowBack, contentDescription = "Back") } },
+            )
+        },
+    ) { padding ->
+        Column(
+            Modifier.fillMaxSize().padding(padding).padding(24.dp),
+            verticalArrangement = Arrangement.spacedBy(16.dp),
+        ) {
+            SettingsCard(title = "About") {
+                Text("Vellum Studio ${BuildConfig.VERSION_NAME}", style = MaterialTheme.typography.bodyMedium)
+                Text(
+                    "A high-fidelity S Pen drawing app: pressure- and tilt-sensitive brushes, layers with full blend modes, " +
+                        "bounded undo history, and a Wi-Fi bridge to a PC companion app.",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            SettingsCard(title = "Input") {
+                Text(
+                    "Drawing is stylus-only by design: the S Pen (or eraser end) always draws, one finger pans, and two fingers " +
+                        "pinch-zoom and rotate. While the pen is down, touch input is ignored to prevent palm smudges.",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            SettingsCard(title = "Storage") {
+                Text(
+                    "Projects live in this app's private storage as layered PNGs + metadata, so they survive app updates. " +
+                        "Use Export > Save PNG to Gallery to get a flattened copy into your Pictures.",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            SettingsCard(title = "Canvas") {
+                Row(
+                    Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Column(Modifier.weight(1f)) {
+                        Text("Paper texture", style = MaterialTheme.typography.bodyMedium)
+                        Text(
+                            "A subtle procedural paper grain, multiplied over the canvas so strokes pick up a bit of " +
+                                "tooth instead of looking perfectly flat. Applies live while drawing and to every " +
+                                "export/thumbnail/print of this project. Off by default.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                    Switch(
+                        checked = settingsRepository.paperTextureEnabled,
+                        onCheckedChange = { settingsRepository.paperTextureEnabled = it },
+                    )
+                }
+                if (settingsRepository.paperTextureEnabled) {
+                    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                        Text("Strength", style = MaterialTheme.typography.labelSmall, modifier = Modifier.padding(end = 8.dp))
+                        Slider(
+                            value = settingsRepository.paperTextureStrength,
+                            onValueChange = { settingsRepository.paperTextureStrength = it },
+                            valueRange = 0.05f..1f,
+                            modifier = Modifier.weight(1f),
+                        )
+                    }
+                }
+            }
+            SettingsCard(title = "Experimental") {
+                Row(
+                    Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Column(Modifier.weight(1f)) {
+                        Text("GPU-accelerated compositing", style = MaterialTheme.typography.bodyMedium)
+                        Text(
+                            "Renders the canvas view with OpenGL when you're not actively drawing (panning/zooming/" +
+                                "just looking), instead of the normal software path. Off by default. Drawing itself is " +
+                                "always unaffected either way — this only changes how the settled canvas is displayed, " +
+                                "and only when every visible layer uses Normal blend mode.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                    Switch(
+                        checked = settingsRepository.experimentalGpuCompositor,
+                        onCheckedChange = { settingsRepository.experimentalGpuCompositor = it },
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun SettingsCard(title: String, content: @Composable ColumnScopeContent) {
+    Card(shape = RoundedCornerShape(16.dp), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)) {
+        Column(Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            Text(title, style = MaterialTheme.typography.titleMedium)
+            content()
+        }
+    }
+}
+
+private typealias ColumnScopeContent = androidx.compose.foundation.layout.ColumnScope.() -> Unit
