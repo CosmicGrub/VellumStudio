@@ -14,7 +14,10 @@ import com.vellum.studio.canvas.CanvasEngine
  *
  *  - the experimental setting is on,
  *  - no stroke is currently in progress, and
- *  - every visible layer uses Normal blend mode (see [CompositorRenderer]'s doc for why).
+ *  - every visible layer's blend mode is one of [CompositorRenderer.GPU_SUPPORTED_BLEND_MODES]
+ *    (Normal, Multiply, or Screen — see [CompositorRenderer]'s private `applyBlendMode` for
+ *    exactly why those three and not the rest of [com.vellum.studio.canvas.LayerBlendMode]'s full
+ *    list).
  *
  * The instant any of those flips, EditorScreen stops showing this view and the proven software
  * `DrawingCanvasView.onDraw()` path (which never stopped rendering underneath — this is purely an
@@ -22,8 +25,13 @@ import com.vellum.studio.canvas.CanvasEngine
  * the setting off instantly reverts to the exact software path that was already hardened this
  * session, with zero other code changes needed.
  *
- * Not yet handling: live-stroke rendering, non-Normal blend modes (see [CompositorRenderer]).
- * Extending this to cover those is real future work, not something this pass silently half-does.
+ * Not yet handling: live-stroke rendering, and the blend modes outside
+ * [CompositorRenderer.GPU_SUPPORTED_BLEND_MODES] (Overlay/Darken/Lighten/Color Dodge/Color
+ * Burn/Hard Light/Soft Light/Difference/Exclusion/Hue/Saturation/Color/Luminosity — each is
+ * genuinely infeasible in a single GLES2 blend-factor pass, not merely unimplemented; see the
+ * doc on [CompositorRenderer.applyBlendMode] for why each one specifically doesn't fit). Extending
+ * live-stroke rendering is real future work; extending the excluded blend modes would need either
+ * a multi-pass render-to-texture approach or a framebuffer-fetch extension, both out of scope here.
  */
 class LayerCompositorGLView(context: Context) : GLSurfaceView(context) {
     private val compositorRenderer = CompositorRenderer()
