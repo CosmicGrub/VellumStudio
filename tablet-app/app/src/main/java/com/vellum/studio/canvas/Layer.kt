@@ -46,6 +46,12 @@ class Layer(
     visible: Boolean = true,
     blendMode: LayerBlendMode = LayerBlendMode.NORMAL,
     locked: Boolean = false,
+    // True only for a layer created via CanvasEngine.addImageLayer (an imported reference photo),
+    // never for an ordinary drawing layer. Explicit and constructor-set rather than inferred from
+    // the layer's name ("Reference") -- see PoseOverlay's "Show Pose Guide" gating in LayersPanel,
+    // which needs to know unambiguously whether pose detection against this layer's bitmap is even
+    // meaningful, without depending on a display name the user is free to rename.
+    val isReferenceImage: Boolean = false,
 ) {
     /**
      * Always mutable. A stroke constructs `Canvas(bitmap)` directly around this on every touch, and

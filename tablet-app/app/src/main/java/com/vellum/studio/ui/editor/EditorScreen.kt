@@ -24,6 +24,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowBack
+import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.Balance
 import androidx.compose.material.icons.filled.Brush
 import androidx.compose.material.icons.filled.CenterFocusWeak
@@ -46,8 +47,10 @@ import androidx.compose.material3.LocalContentColor
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Snackbar
+import androidx.compose.material3.SnackbarDuration
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
+import androidx.compose.material3.SnackbarResult
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
@@ -220,6 +223,18 @@ fun EditorScreen(
                                 )
                             }
                         }
+                        // Smart Shape Assist (see ShapeAssist/DrawingCanvasView) -- placed right
+                        // next to the tool-mode dropdown it modifies the behavior of. Purely a
+                        // per-session toggle: turning it off mid-drawing has zero effect on
+                        // strokes already on the canvas, only on what happens after the *next*
+                        // stroke completes.
+                        IconButton(onClick = { eng.shapeAssistEnabled = !eng.shapeAssistEnabled }) {
+                            Icon(
+                                Icons.Filled.AutoAwesome,
+                                contentDescription = "Shape assist",
+                                tint = if (eng.shapeAssistEnabled) MaterialTheme.colorScheme.primary else LocalContentColor.current,
+                            )
+                        }
                         ColorSwatchButton(colorArgb = eng.currentColorArgb, onClick = { colorPickerOpen = true })
 
                         var symmetryMenuOpen by remember { mutableStateOf(false) }
@@ -331,6 +346,18 @@ fun EditorScreen(
                                             glViewRef.value?.requestComposite()
                                         }
                                         onTransformChanged = { glViewRef.value?.requestComposite() }
+                                        onShapeAssistCandidate = { label ->
+                                            scope.launch {
+                                                val result = snackbarHostState.showSnackbar(
+                                                    message = "Snap to $label?",
+                                                    actionLabel = "Snap",
+                                                    duration = SnackbarDuration.Short,
+                                                )
+                                                if (result == SnackbarResult.ActionPerformed) {
+                                                    drawingViewRef.value?.applyPendingShapeSnap()
+                                                }
+                                            }
+                                        }
                                         drawingViewRef.value = this
                                     }
                                 },
@@ -375,7 +402,11 @@ fun EditorScreen(
                         enter = slideInHorizontally(initialOffsetX = { it }),
                         exit = slideOutHorizontally(targetOffsetX = { it }),
                     ) {
-                        LayersPanel(engine = eng, modifier = Modifier.width(340.dp).fillMaxHeight())
+                        LayersPanel(
+                            engine = eng,
+                            modifier = Modifier.width(340.dp).fillMaxHeight(),
+                            onMessage = { msg -> scope.launch { snackbarHostState.showSnackbar(msg) } },
+                        )
                     }
                 }
             }

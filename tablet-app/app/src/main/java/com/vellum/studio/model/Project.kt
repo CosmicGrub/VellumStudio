@@ -13,6 +13,12 @@ data class LayerMeta(
     val blendMode: String,
     val order: Int,
     val locked: Boolean = false,
+    // Default false, same reasoning as `locked` above -- an older on-disk project saved before
+    // this field existed still deserializes fine (kotlinx.serialization falls back to the default
+    // for a key missing from the JSON) and simply reports every layer as not-a-reference-image.
+    // See Layer.isReferenceImage's own doc for what this drives (the Pose Reference Overlay's
+    // "Show Pose Guide" entry point in LayersPanel).
+    val isReferenceImage: Boolean = false,
 )
 
 /** On-disk project record. Layer pixel data lives alongside as `layers/<id>.png`, not inline here. */
