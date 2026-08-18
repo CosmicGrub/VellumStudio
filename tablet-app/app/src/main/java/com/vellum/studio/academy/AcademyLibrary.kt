@@ -12,6 +12,7 @@ object AcademyLibrary {
         CourseDigitalFundamentals.course,
         CourseWetOnWet.course,
         CourseGraffiti.course,
+        CoursePhotoReference.course,
     )
 
     fun byId(id: String): Course? = all.firstOrNull { it.id == id }
