@@ -60,6 +60,29 @@ class CanvasEngine(val widthPx: Int, val heightPx: Int) {
      * rotated position(s) too, live, alongside the real stroke. */
     var symmetryMode by mutableStateOf(SymmetryMode.NONE)
 
+    /** See [ShapeAssist] -- while true, DrawingCanvasView captures each brush stroke's raw
+     * canvas-space point path and, on stroke end, offers (never forces) to replace a confidently
+     * recognized straight line / circle / ellipse / rectangle / triangle with a perfectly-drawn
+     * version at the same bounds/color/brush (DrawingCanvasView.onShapeAssistCandidate /
+     * applyPendingShapeSnap). Off by default; a session/UI toggle like [currentTool] and
+     * [symmetryMode] above, not persisted project data -- and zero behavior change to normal
+     * drawing when off, since capture itself is gated on this flag at each stroke's start. */
+    var shapeAssistEnabled by mutableStateOf(false)
+
+    /** See [PoseOverlay] -- a figure-drawing teaching aid, purely an onDraw() overlay (same
+     * pattern as the paint-by-number numbered-region overlay) over whichever reference-image
+     * layer [poseGuideLayerId] names. Null until LayersPanel's "Show Pose Guide" action on a
+     * [Layer.isReferenceImage] layer successfully runs on-device pose detection against it.
+     * Never mutates layer pixels. */
+    var poseGuide by mutableStateOf<PoseOverlay.PoseGuide?>(null)
+    var poseGuideLayerId by mutableStateOf<String?>(null)
+    var poseGuideEnabled by mutableStateOf(false)
+
+    /** [Layer.contentVersion] of [poseGuideLayerId] at the moment [poseGuide] was computed --
+     * lets LayersPanel tell a still-valid cached guide (re-enable for free) apart from a stale one
+     * (the reference layer's own pixels changed since, e.g. someone drew on it -- recompute). */
+    var poseGuideContentVersion by mutableStateOf(-1)
+
     /**
      * Rectangular selection, canvas-space, only meaningful in [ToolMode.SELECT] -- editing-session
      * UI state (like [currentTool] and [symmetryMode]), not persisted project data. Null means no
@@ -138,7 +161,7 @@ class CanvasEngine(val widthPx: Int, val heightPx: Int) {
         val left = (widthPx - drawW) / 2f
         val top = (heightPx - drawH) / 2f
         canvas.drawBitmap(source, null, RectF(left, top, left + drawW, top + drawH), Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG))
-        return insertLayer(Layer(name = name, bitmap = fitted), aboveActive)
+        return insertLayer(Layer(name = name, bitmap = fitted, isReferenceImage = true), aboveActive)
     }
 
     private fun insertLayer(layer: Layer, aboveActive: Boolean): Layer {
@@ -163,7 +186,14 @@ class CanvasEngine(val widthPx: Int, val heightPx: Int) {
 
     fun duplicateActiveLayer() {
         val src = activeLayer() ?: return
-        val copy = Layer(name = "${src.name} copy", bitmap = src.snapshot(), opacity = src.opacity, visible = src.visible, blendMode = src.blendMode)
+        val copy = Layer(
+            name = "${src.name} copy",
+            bitmap = src.snapshot(),
+            opacity = src.opacity,
+            visible = src.visible,
+            blendMode = src.blendMode,
+            isReferenceImage = src.isReferenceImage,
+        )
         layers.add(activeLayerIndex + 1, copy)
         // Keep focus on the layer actually being stroked right now instead of jumping to the new
         // duplicate - see strokeInProgressLayerId's doc comment. Inserting strictly after
@@ -182,6 +212,17 @@ class CanvasEngine(val widthPx: Int, val heightPx: Int) {
         layers.removeAt(activeLayerIndex)
         layer.bitmap.recycle()
         activeLayerIndex = activeLayerIndex.coerceIn(0, layers.size - 1)
+        // Degrade gracefully rather than leaving a dangling pointer: if the layer just deleted was
+        // the one the current pose guide was computed against, there's nothing left for that
+        // overlay to sit on top of -- clear it the same way "no reference image present" leaves
+        // the pose toggle simply unavailable, instead of a stale skeleton floating over whatever's
+        // now underneath it.
+        if (layer.id == poseGuideLayerId) {
+            poseGuide = null
+            poseGuideLayerId = null
+            poseGuideEnabled = false
+            poseGuideContentVersion = -1
+        }
         bumpRevision()
     }
 

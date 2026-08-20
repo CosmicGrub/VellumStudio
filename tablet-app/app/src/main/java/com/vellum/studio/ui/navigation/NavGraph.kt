@@ -12,6 +12,7 @@ import com.vellum.studio.model.CustomBrushRepository
 import com.vellum.studio.model.PaletteRepository
 import com.vellum.studio.model.ProjectRepository
 import com.vellum.studio.model.SettingsRepository
+import com.vellum.studio.model.UserPhotoTemplateRepository
 import com.vellum.studio.ui.academy.AcademyScreen
 import com.vellum.studio.ui.academy.CourseDetailScreen
 import com.vellum.studio.ui.academy.LessonScreen
@@ -42,6 +43,7 @@ fun VellumNavGraph(
     academyProgressRepository: AcademyProgressRepository,
     settingsRepository: SettingsRepository,
     customBrushRepository: CustomBrushRepository,
+    userPhotoTemplateRepository: UserPhotoTemplateRepository,
     navController: NavHostController = rememberNavController(),
 ) {
     NavHost(navController = navController, startDestination = Routes.GALLERY) {
@@ -78,6 +80,7 @@ fun VellumNavGraph(
         composable(Routes.COLORING_BOOK) {
             ColoringBookScreen(
                 repository = repository,
+                userPhotoTemplateRepository = userPhotoTemplateRepository,
                 onBack = { navController.popBackStack() },
                 onOpenProject = { id -> navController.navigate(Routes.editor(id)) { popUpTo(Routes.GALLERY) } },
             )

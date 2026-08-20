@@ -19,6 +19,16 @@ android {
         vectorDrawables {
             useSupportLibrary = true
         }
+
+        // Both real target devices (Tab S9 FE, Z Fold5) are arm64 -- restrict the OpenCV AAR's
+        // bundled native libs (armeabi-v7a/arm64-v8a/x86/x86_64, ~150MB unpacked) to just the one
+        // ABI we actually ship to during this development phase, to keep build time and APK size
+        // sane. KNOWN LIMITATION: a real release build (Play Store / arbitrary hardware) would
+        // need to drop this filter and either ship all ABIs or move to an Android App Bundle so
+        // Play delivers only the matching ABI per device.
+        ndk {
+            abiFilters += "arm64-v8a"
+        }
     }
 
     buildTypes {
@@ -76,6 +86,38 @@ dependencies {
 
     implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.7.3")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.9.0")
+
+    // On-device computer vision for the photo-to-activity conversion engine (canvas/PhotoConverter.kt):
+    // tone-quantize + closed-contour line-art extraction, ported from tools/masterart_pipeline's
+    // proven cv2 technique. Published directly to Maven Central as a plain AAR (with a bundled
+    // native lib, loaded via OpenCVLoader.initLocal()) since OpenCV 4.9.0 -- no separate OpenCV
+    // Manager APK or native-loader dance needed. Verified the coordinate + version list directly
+    // against Maven Central (repo1.maven.org/maven2/org/opencv/opencv/maven-metadata.xml) on
+    // 2026-08-18: 4.9.0 through 4.14.0, then 5.0.0/5.0.0.1. Pinned to 4.14.0 (latest 4.x) rather
+    // than the newer 5.0.x line deliberately -- 5.0 reorganized the Java API surface (e.g.
+    // Imgproc.arcLength moved to a new org.opencv.geometry.Geometry class), which broke this
+    // file's contour-tracing calls against the standard, widely-documented 4.x Java API this port
+    // was written against. 4.14.0 is still current, still a plain zero-cost on-device AAR, and
+    // avoids that migration risk for this expansion. Runs fully on-device, zero network calls,
+    // zero API cost -- satisfies the project's "cost-free AI" constraint.
+    implementation("org.opencv:opencv:4.14.0")
+
+    // On-device pose detection for the "Pose Reference Overlay" figure-drawing teaching aid
+    // (canvas/PoseOverlay.kt): draws a non-destructive skeleton overlay on top of an imported
+    // reference-photo layer, purely in DrawingCanvasView's onDraw() -- never touches layer pixels.
+    // This is the BUNDLED artifact (as opposed to the Play-Services-unbundled
+    // com.google.android.gms:play-services-mlkit-pose-detection, which downloads its model on
+    // first use over the network) -- the model ships inside this AAR itself, so detection runs
+    // fully offline with zero network calls and zero API cost, satisfying the project's
+    // "cost-free AI" constraint outright with no separate download step to reason about. The
+    // "-accurate" variant (vs. the streaming-tuned base model) is the right choice since this
+    // always runs once against a single still reference image, never a live camera feed. Verified
+    // the coordinate + version list directly against the Google Maven group index
+    // (dl.google.com/dl/android/maven2/com/google/mlkit/pose-detection-accurate/maven-metadata.xml)
+    // on 2026-08-18: latest STABLE release is 17.0.0 (18.0.0-beta5 also exists but is a
+    // prerelease) -- pinned to the stable line deliberately, same reasoning as the OpenCV pin
+    // above.
+    implementation("com.google.mlkit:pose-detection-accurate:17.0.0")
 
     debugImplementation("androidx.compose.ui:ui-tooling")
     debugImplementation("androidx.compose.ui:ui-test-manifest")

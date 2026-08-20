@@ -113,7 +113,7 @@ fun SettingsScreen(settingsRepository: SettingsRepository, onBack: () -> Unit) {
                             "Renders the canvas view with OpenGL when you're not actively drawing (panning/zooming/" +
                                 "just looking), instead of the normal software path. Off by default. Drawing itself is " +
                                 "always unaffected either way — this only changes how the settled canvas is displayed, " +
-                                "and only when every visible layer uses Normal blend mode.",
+                                "and only when every visible layer uses Normal, Multiply, or Screen blend mode.",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
