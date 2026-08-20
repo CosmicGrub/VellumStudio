@@ -28,6 +28,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowBack
+import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.Balance
 import androidx.compose.material.icons.filled.Brush
 import androidx.compose.material.icons.filled.CenterFocusWeak
@@ -50,8 +51,10 @@ import androidx.compose.material3.LocalContentColor
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Snackbar
+import androidx.compose.material3.SnackbarDuration
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
+import androidx.compose.material3.SnackbarResult
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
@@ -76,9 +79,9 @@ import androidx.compose.ui.viewinterop.AndroidView
 import androidx.compose.ui.window.Dialog
 import com.vellum.studio.canvas.CanvasEngine
 import com.vellum.studio.canvas.DrawingCanvasView
-import com.vellum.studio.canvas.LayerBlendMode
 import com.vellum.studio.canvas.SymmetryMode
 import com.vellum.studio.canvas.ToolMode
+import com.vellum.studio.canvas.gl.CompositorRenderer
 import com.vellum.studio.canvas.gl.LayerCompositorGLView
 import com.vellum.studio.model.CustomBrushRepository
 import com.vellum.studio.model.PaletteRepository
@@ -119,9 +122,10 @@ fun EditorScreen(
     val snackbarHostState = remember { SnackbarHostState() }
 
     // Experimental GPU compositor state -- see LayerCompositorGLView's class doc for the exact
-    // activation preconditions this mirrors (setting on, no active stroke, every visible layer
-    // Normal blend). strokeActive is fed by DrawingCanvasView's onStrokeActiveChanged callback;
-    // everything else here is already Compose-observable state read directly below.
+    // activation preconditions this mirrors (setting on, no active stroke, every visible layer's
+    // blend mode in CompositorRenderer.GPU_SUPPORTED_BLEND_MODES). strokeActive is fed by
+    // DrawingCanvasView's onStrokeActiveChanged callback; everything else here is already
+    // Compose-observable state read directly below.
     var strokeActive by remember { mutableStateOf(false) }
     val glViewRef = remember { mutableStateOf<LayerCompositorGLView?>(null) }
 
@@ -189,6 +193,9 @@ fun EditorScreen(
                     // reachable instead of clipping them. On any screen wide enough for the icons
                     // to fit under the cap already (every tablet/foldable-main-screen posture this
                     // app targets), the cap simply never binds and nothing scrolls -- zero change.
+                    // NOTE: the merge from main added a 9th icon (Assist) to this same row -- it
+                    // still lives inside the width cap + horizontalScroll below, so it never
+                    // bypasses the cover-screen fix.
                     val actionsMaxWidth = (LocalConfiguration.current.screenWidthDp.dp - 140.dp).coerceAtLeast(120.dp)
                     Row(
                         modifier = Modifier.widthIn(max = actionsMaxWidth).horizontalScroll(rememberScrollState()),
@@ -215,6 +222,18 @@ fun EditorScreen(
 
                         if (eng != null) {
                             ToolModeSelector(eng)
+                            // Smart Shape Assist (see ShapeAssist/DrawingCanvasView) -- placed right
+                            // next to the tool-mode dropdown it modifies the behavior of. Purely a
+                            // per-session toggle: turning it off mid-drawing has zero effect on
+                            // strokes already on the canvas, only on what happens after the *next*
+                            // stroke completes.
+                            IconButton(onClick = { eng.shapeAssistEnabled = !eng.shapeAssistEnabled }) {
+                                Icon(
+                                    Icons.Filled.AutoAwesome,
+                                    contentDescription = "Shape assist",
+                                    tint = if (eng.shapeAssistEnabled) MaterialTheme.colorScheme.primary else LocalContentColor.current,
+                                )
+                            }
                             ColorSwatchButton(colorArgb = eng.currentColorArgb, onClick = { colorPickerOpen = true })
                             SymmetryModeSelector(eng)
                         }
@@ -289,7 +308,6 @@ fun EditorScreen(
                 loading || engine == null -> CircularProgressIndicator(Modifier.align(Alignment.Center))
                 else -> {
                     val eng = engine!!
-
                     if (foldState.posture == FoldPosture.HALF_OPENED_TABLETOP) {
                         // Tabletop/flex posture: the hinge physically bisects the screen, so split
                         // into two stacked panes -- canvas above the crease, controls below it,
@@ -315,6 +333,18 @@ fun EditorScreen(
                                     }
                                 },
                                 onTransformChanged = { glViewRef.value?.requestComposite() },
+                                onShapeAssistCandidate = { label ->
+                                    scope.launch {
+                                        val result = snackbarHostState.showSnackbar(
+                                            message = "Snap to $label?",
+                                            actionLabel = "Snap",
+                                            duration = SnackbarDuration.Short,
+                                        )
+                                        if (result == SnackbarResult.ActionPerformed) {
+                                            drawingViewRef.value?.applyPendingShapeSnap()
+                                        }
+                                    }
+                                },
                                 drawingViewRef = drawingViewRef,
                                 glViewRef = glViewRef,
                                 modifier = Modifier.weight(1f).fillMaxWidth(),
@@ -352,6 +382,18 @@ fun EditorScreen(
                                     }
                                 },
                                 onTransformChanged = { glViewRef.value?.requestComposite() },
+                                onShapeAssistCandidate = { label ->
+                                    scope.launch {
+                                        val result = snackbarHostState.showSnackbar(
+                                            message = "Snap to $label?",
+                                            actionLabel = "Snap",
+                                            duration = SnackbarDuration.Short,
+                                        )
+                                        if (result == SnackbarResult.ActionPerformed) {
+                                            drawingViewRef.value?.applyPendingShapeSnap()
+                                        }
+                                    }
+                                },
                                 drawingViewRef = drawingViewRef,
                                 glViewRef = glViewRef,
                                 modifier = Modifier.weight(1f).fillMaxWidth(),
@@ -366,7 +408,11 @@ fun EditorScreen(
                         enter = slideInHorizontally(initialOffsetX = { it }),
                         exit = slideOutHorizontally(targetOffsetX = { it }),
                     ) {
-                        LayersPanel(engine = eng, modifier = Modifier.width(340.dp).fillMaxHeight())
+                        LayersPanel(
+                            engine = eng,
+                            modifier = Modifier.width(340.dp).fillMaxHeight(),
+                            onMessage = { msg -> scope.launch { snackbarHostState.showSnackbar(msg) } },
+                        )
                     }
                 }
             }
@@ -422,6 +468,7 @@ private fun CanvasSurface(
     onStrokeActiveChanged: (Boolean) -> Unit,
     onStrokeCommitted: () -> Unit,
     onTransformChanged: () -> Unit,
+    onShapeAssistCandidate: (String) -> Unit,
     drawingViewRef: MutableState<DrawingCanvasView?>,
     glViewRef: MutableState<LayerCompositorGLView?>,
     modifier: Modifier = Modifier,
@@ -435,6 +482,7 @@ private fun CanvasSurface(
                     this.onStrokeCommitted = { onStrokeCommitted() }
                     this.onStrokeActiveChanged = { active -> onStrokeActiveChanged(active) }
                     this.onTransformChanged = { onTransformChanged() }
+                    this.onShapeAssistCandidate = { label -> onShapeAssistCandidate(label) }
                     drawingViewRef.value = this
                 }
             },
@@ -447,7 +495,7 @@ private fun CanvasSurface(
         // with no other change needed.
         val gpuEligible = settingsRepository.experimentalGpuCompositor &&
             !strokeActive &&
-            engine.layers.all { !it.visible || it.blendMode == LayerBlendMode.NORMAL }
+            engine.layers.all { !it.visible || it.blendMode in CompositorRenderer.GPU_SUPPORTED_BLEND_MODES }
         // Reading engine.revision ties this composable's recomposition to every content-affecting
         // mutation, so the GL overlay redraws whenever the settled canvas actually changed underneath it.
         val contentRevision = engine.revision

@@ -20,6 +20,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Accessibility
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.AddPhotoAlternate
 import androidx.compose.material.icons.filled.ArrowDownward
@@ -56,15 +57,49 @@ import androidx.compose.ui.unit.dp
 import com.vellum.studio.canvas.CanvasEngine
 import com.vellum.studio.canvas.Layer
 import com.vellum.studio.canvas.LayerBlendMode
+import com.vellum.studio.canvas.PoseOverlay
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
 @Composable
-fun LayersPanel(engine: CanvasEngine, modifier: Modifier = Modifier) {
+fun LayersPanel(engine: CanvasEngine, modifier: Modifier = Modifier, onMessage: (String) -> Unit = {}) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     var importing by remember { mutableStateOf(false) }
+    // Which reference-image layer (if any) a pose-detection pass is currently running against --
+    // keyed by layer id rather than a plain Boolean so multiple reference layers in one project
+    // each get their own independent loading indicator instead of one flag ambiguously covering
+    // whichever was tapped most recently.
+    var poseDetectingLayerId by remember { mutableStateOf<String?>(null) }
+
+    fun togglePoseGuide(layer: Layer) {
+        val eng = engine
+        when {
+            eng.poseGuideEnabled && eng.poseGuideLayerId == layer.id -> eng.poseGuideEnabled = false
+            eng.poseGuideLayerId == layer.id && eng.poseGuide != null && eng.poseGuideContentVersion == layer.contentVersion -> {
+                // Already computed for this exact layer content -- just re-show it, no need to
+                // re-run detection.
+                eng.poseGuideEnabled = true
+            }
+            else -> {
+                poseDetectingLayerId = layer.id
+                scope.launch {
+                    val guide = PoseOverlay.detectPose(layer.bitmap)
+                    poseDetectingLayerId = null
+                    if (guide != null) {
+                        eng.poseGuide = guide
+                        eng.poseGuideLayerId = layer.id
+                        eng.poseGuideContentVersion = layer.contentVersion
+                        eng.poseGuideEnabled = true
+                    } else {
+                        eng.poseGuideEnabled = false
+                        onMessage("No clear pose detected in this image -- try a photo with a fully visible person")
+                    }
+                }
+            }
+        }
+    }
 
     // Modern system photo picker (androidx.activity) -- no storage permission needed, and it's
     // the same picker the rest of Android uses, so it's a UI the user already recognizes.
@@ -122,6 +157,9 @@ fun LayersPanel(engine: CanvasEngine, modifier: Modifier = Modifier) {
                     onToggleLocked = { engine.setLayerLocked(layer, !layer.locked) },
                     onOpacityChange = { engine.setLayerOpacity(layer, it) },
                     onBlendModeChange = { engine.setLayerBlendMode(layer, it) },
+                    poseGuideShown = engine.poseGuideEnabled && engine.poseGuideLayerId == layer.id,
+                    poseGuideLoading = poseDetectingLayerId == layer.id,
+                    onTogglePoseGuide = { togglePoseGuide(layer) },
                 )
             }
         }
@@ -141,6 +179,9 @@ private fun LayerRow(
     onToggleLocked: () -> Unit,
     onOpacityChange: (Float) -> Unit,
     onBlendModeChange: (LayerBlendMode) -> Unit,
+    poseGuideShown: Boolean = false,
+    poseGuideLoading: Boolean = false,
+    onTogglePoseGuide: () -> Unit = {},
 ) {
     var blendMenuOpen by remember { mutableStateOf(false) }
     val borderColor = if (isActive) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.surfaceVariant
@@ -191,6 +232,24 @@ private fun LayerRow(
             }
             IconButton(onClick = onMoveUp, enabled = canMoveUp, modifier = actionIconSize) { Icon(Icons.Filled.ArrowUpward, contentDescription = "Move up") }
             IconButton(onClick = onMoveDown, enabled = canMoveDown, modifier = actionIconSize) { Icon(Icons.Filled.ArrowDownward, contentDescription = "Move down") }
+            // Pose Reference Overlay entry point (see PoseOverlay) -- only ever shown for a layer
+            // actually created via "Import reference image" (Layer.isReferenceImage), so an
+            // ordinary drawing layer never grows a 5th action icon. Degrades to simply not being
+            // there at all when no reference image is present, per the task's "unavailable, not a
+            // crash" requirement -- there's no separate disabled/greyed state to reason about.
+            if (layer.isReferenceImage) {
+                IconButton(onClick = onTogglePoseGuide, modifier = actionIconSize, enabled = !poseGuideLoading) {
+                    if (poseGuideLoading) {
+                        CircularProgressIndicator(modifier = Modifier.size(18.dp), strokeWidth = 2.dp)
+                    } else {
+                        Icon(
+                            Icons.Filled.Accessibility,
+                            contentDescription = if (poseGuideShown) "Hide pose guide" else "Show pose guide",
+                            tint = if (poseGuideShown) MaterialTheme.colorScheme.primary else LocalContentColor.current,
+                        )
+                    }
+                }
+            }
         }
         Row(verticalAlignment = Alignment.CenterVertically) {
             Text("Opacity", style = MaterialTheme.typography.labelSmall, modifier = Modifier.padding(end = 8.dp))

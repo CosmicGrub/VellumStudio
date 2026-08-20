@@ -7,6 +7,7 @@ import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.Matrix
 import android.graphics.Paint
+import android.graphics.PointF
 import android.graphics.RectF
 import android.os.Build
 import android.util.AttributeSet
@@ -50,6 +51,16 @@ class DrawingCanvasView @JvmOverloads constructor(
      * zero behavior change if unset" reasoning as [onStrokeActiveChanged]. */
     var onTransformChanged: (() -> Unit)? = null
 
+    /**
+     * Fires at most once per committed stroke, only while [CanvasEngine.shapeAssistEnabled] is on
+     * and that stroke's point path scored a confident match in [ShapeAssist.recognize]. The
+     * argument is a plain-English label ("circle", "rectangle", ...) for a Snackbar/chip; the
+     * caller's affordance should call [applyPendingShapeSnap] on its accept action. Never draws
+     * any UI itself and never applies anything on its own -- purely a notification, so it's zero
+     * behavior change for anyone who leaves it unset, same as [onStrokeCommitted].
+     */
+    var onShapeAssistCandidate: ((String) -> Unit)? = null
+
     /** A defensive copy of the current pan/zoom/rotate transform, safe to read from another
      * thread (e.g. the GL compositor's render thread) without holding a reference to the live,
      * still-mutating instance this view keeps updating on its own thread. */
@@ -83,6 +94,20 @@ class DrawingCanvasView @JvmOverloads constructor(
         pathEffect = android.graphics.DashPathEffect(floatArrayOf(14f, 10f), 0f)
     }
 
+    // Pose Reference Overlay (see PoseOverlay) -- a teaching-aid cyan, deliberately distinct from
+    // the paint-by-number white/black number discs and the selection tool's blue-dashed marquee,
+    // so it reads unambiguously as "a guide drawn ON TOP of the reference photo" rather than any
+    // kind of editable canvas content.
+    private val poseBonePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        style = Paint.Style.STROKE
+        color = 0xE029B6F6.toInt()
+        strokeCap = Paint.Cap.ROUND
+    }
+    private val poseJointPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        style = Paint.Style.FILL
+        color = 0xFF0288D1.toInt()
+    }
+
     // --- stylus stroke state ---
     private var strokePointerId = -1
     private var strokeRenderer: StrokeRenderer? = null
@@ -90,6 +115,35 @@ class DrawingCanvasView @JvmOverloads constructor(
     private var strokeTargetLayer: Layer? = null
     private var strokeUsesScratch = false
     private var pendingStroke: UndoManager.PendingStroke? = null
+
+    // --- Smart Shape Assist (see ShapeAssist) ---
+    //
+    // A lightweight, PARALLEL point capture -- entirely separate from StrokeRenderer's own dab
+    // math above, which this never reads from or writes to. Only ever populated while
+    // CanvasEngine.shapeAssistEnabled is true (checked once, at stroke start), so a normal
+    // Assist-off stroke allocates and touches none of this.
+    private var capturingShapeAssist = false
+    private val shapeAssistPoints = mutableListOf<PointF>()
+    private var shapeAssistBrush: Brush? = null
+    private var shapeAssistColorArgb = 0
+    private var shapeAssistSizeMultiplier = 1f
+    private var shapeAssistOpacityMultiplier = 1f
+
+    private data class PendingShapeAssist(
+        val layerId: String,
+        val revisionAtOffer: Int,
+        val candidate: ShapeAssist.Candidate,
+        val brush: Brush,
+        val colorArgb: Int,
+        val sizeMultiplier: Float,
+        val opacityMultiplier: Float,
+    )
+
+    // Survives past cleanupStrokeState() (unlike the capture fields above) since the Snackbar
+    // offering it stays alive after the stroke that produced it has fully ended -- see
+    // applyPendingShapeSnap's revision check for how a stale offer (something else changed the
+    // canvas in the meantime) gets caught instead of silently corrupting a later stroke.
+    private var pendingShapeAssist: PendingShapeAssist? = null
 
     // --- selection tool state (ToolMode.SELECT only; entirely separate pointer tracking from a
     // stroke's, so this never interacts with the stroke-ownership logic above at all) ---
@@ -295,6 +349,10 @@ class DrawingCanvasView @JvmOverloads constructor(
             drawNumberLabels(canvas, eng)
         }
 
+        if (eng.poseGuideEnabled) {
+            eng.poseGuide?.let { drawPoseGuide(canvas, it) }
+        }
+
         eng.selectionRect?.let { rect ->
             selectionPaint.strokeWidth = 2f / currentScale()
             canvas.drawRect(rect, selectionPaint)
@@ -320,6 +378,24 @@ class DrawingCanvasView @JvmOverloads constructor(
             canvas.drawCircle(region.centroidX, region.centroidY, labelRadius, numberLabelPaint)
             val textY = region.centroidY - (numberLabelTextPaint.descent() + numberLabelTextPaint.ascent()) / 2f
             canvas.drawText(region.number.toString(), region.centroidX, textY, numberLabelTextPaint)
+        }
+    }
+
+    /** Figure-drawing skeleton overlay (see [PoseOverlay]) -- drawn fresh every frame from
+     * [CanvasEngine.poseGuide], never baked into any layer's pixels, same non-destructive
+     * "drawn in onDraw()" contract [drawNumberLabels] above already has. */
+    private fun drawPoseGuide(canvas: Canvas, guide: PoseOverlay.PoseGuide) {
+        val scale = currentScale()
+        poseBonePaint.strokeWidth = 5f / scale
+        val jointRadius = 8f / scale
+        for ((fromType, toType) in PoseOverlay.CONNECTIONS) {
+            val from = guide.joints[fromType]?.takeIf { it.confident } ?: continue
+            val to = guide.joints[toType]?.takeIf { it.confident } ?: continue
+            canvas.drawLine(from.x, from.y, to.x, to.y, poseBonePaint)
+        }
+        for (joint in guide.joints.values) {
+            if (!joint.confident) continue
+            canvas.drawCircle(joint.x, joint.y, jointRadius, poseJointPaint)
         }
     }
 
@@ -619,6 +695,17 @@ class DrawingCanvasView @JvmOverloads constructor(
         val renderer = StrokeRenderer(brush, eng.currentColorArgb, eng.brushSizeMultiplier, eng.brushOpacityMultiplier)
         strokeRenderer = renderer
         strokeTargetLayer = layer
+
+        // Checked once, here, rather than on every sample below -- see the field's own doc
+        // comment for why an Assist-off stroke never touches any of this.
+        capturingShapeAssist = eng.shapeAssistEnabled
+        if (capturingShapeAssist) {
+            shapeAssistPoints.clear()
+            shapeAssistBrush = brush
+            shapeAssistColorArgb = eng.currentColorArgb
+            shapeAssistSizeMultiplier = eng.brushSizeMultiplier
+            shapeAssistOpacityMultiplier = eng.brushOpacityMultiplier
+        }
         // Erasers always route through the scratch mask too (see StrokeRenderer's class doc) so a
         // soft-hardness eraser gets a real graduated falloff instead of a hard CLEAR-mode edge.
         strokeUsesScratch = !brush.buildUp
@@ -643,6 +730,7 @@ class DrawingCanvasView @JvmOverloads constructor(
             mirrorRenderer.start(strokeTargetCanvas!!, sample.copy(x = p.x, y = p.y))
             mirrorRenderer.takeDirtyBounds()?.let { invalidateDirty(it) }
         }
+        if (capturingShapeAssist) shapeAssistPoints.add(PointF(sample.x, sample.y))
     }
 
     private fun moveStroke(event: MotionEvent) {
@@ -672,6 +760,9 @@ class DrawingCanvasView @JvmOverloads constructor(
                 val p = transform(histSample.x, histSample.y)
                 mirrorRenderer.moveTo(target, histSample.copy(x = p.x, y = p.y))
             }
+            if (capturingShapeAssist && shapeAssistPoints.size < MAX_SHAPE_ASSIST_POINTS) {
+                shapeAssistPoints.add(PointF(histSample.x, histSample.y))
+            }
         }
         toCanvasSpace(event.getX(idx), event.getY(idx))
         val sample = sampleFrom(event, idx, canvasX, canvasY)
@@ -679,6 +770,9 @@ class DrawingCanvasView @JvmOverloads constructor(
         for ((mirrorRenderer, transform) in mirrorRenderers) {
             val p = transform(sample.x, sample.y)
             mirrorRenderer.moveTo(target, sample.copy(x = p.x, y = p.y))
+        }
+        if (capturingShapeAssist && shapeAssistPoints.size < MAX_SHAPE_ASSIST_POINTS) {
+            shapeAssistPoints.add(PointF(sample.x, sample.y))
         }
 
         renderer.takeDirtyBounds()?.let { invalidateDirty(it) }
@@ -705,11 +799,96 @@ class DrawingCanvasView @JvmOverloads constructor(
             eng.bumpRevision()
             pendingStroke?.commit(layer.snapshot())
             onStrokeCommitted?.invoke()
+            offerShapeAssistIfCandidate(eng, layer)
         } else {
             pendingStroke?.discard()
         }
         cleanupStrokeState()
         invalidate()
+    }
+
+    /** Runs [ShapeAssist.recognize] against this just-committed stroke's captured point path and,
+     * if confident, stashes the candidate + fires [onShapeAssistCandidate] -- see
+     * [applyPendingShapeSnap] for how an accepted offer actually gets applied. A no-op (no
+     * candidate stashed, no callback fired) when Assist mode was off for this stroke or nothing
+     * confident was found, matching "never force a snap the user didn't ask for". */
+    private fun offerShapeAssistIfCandidate(eng: CanvasEngine, layer: Layer) {
+        if (!capturingShapeAssist || shapeAssistPoints.size < 2) return
+        val candidate = ShapeAssist.recognize(shapeAssistPoints) ?: return
+        pendingShapeAssist = PendingShapeAssist(
+            layerId = layer.id,
+            revisionAtOffer = eng.revision,
+            candidate = candidate,
+            brush = shapeAssistBrush ?: eng.currentBrush,
+            colorArgb = shapeAssistColorArgb,
+            sizeMultiplier = shapeAssistSizeMultiplier,
+            opacityMultiplier = shapeAssistOpacityMultiplier,
+        )
+        onShapeAssistCandidate?.invoke(ShapeAssist.labelFor(candidate))
+    }
+
+    /**
+     * Accepts the current Assist-mode shape offer (see [onShapeAssistCandidate]): undoes the
+     * freehand stroke it was computed from (restoring the layer to its pre-stroke content, the
+     * same call the top bar's Undo button makes) and redraws the recognized geometry in its place
+     * at the same layer/brush/color/size, committed as its own normal, independently undoable
+     * stroke -- so the freehand commit ends up genuinely SUPERSEDED (one Undo after accepting
+     * fully reverts to before the freehand stroke, not to the freehand stroke itself) rather than
+     * just visually covered up.
+     *
+     * No-ops silently -- never crashes, never forces anything -- if the canvas has changed since
+     * the offer (another stroke, an undo/redo, a layer edit all bump [CanvasEngine.revision]) or
+     * the target layer is gone/locked, since applying a stale offer on top of unrelated later
+     * work would silently destroy that work.
+     */
+    fun applyPendingShapeSnap() {
+        val pending = pendingShapeAssist ?: return
+        pendingShapeAssist = null
+        val eng = engine ?: return
+        if (eng.revision != pending.revisionAtOffer) return
+        val layer = eng.layers.firstOrNull { it.id == pending.layerId } ?: return
+        if (layer.locked || layer.id == eng.strokeInProgressLayerId) return
+
+        eng.undoManager.undo { id -> eng.layers.firstOrNull { it.id == id } }
+        eng.bumpRevision()
+
+        val before = layer.snapshot()
+        drawShapeOnto(eng, layer, pending)
+        layer.bumpVersion()
+        eng.bumpRevision()
+        eng.undoManager.beginStroke(layer.id, before).commit(layer.snapshot())
+        onStrokeCommitted?.invoke()
+        invalidate()
+    }
+
+    /** Redraws [pending]'s recognized geometry onto [layer] through the exact same
+     * StrokeRenderer + scratch/flatten pipeline a real freehand stroke commits through (see
+     * [endStroke]) -- reusing that hardened compositing path rather than a bespoke "draw a shape"
+     * routine, so a snapped shape looks and behaves exactly like a hand-drawn one of the same
+     * brush would. Synthetic samples use full pressure/no tilt -- a "perfectly drawn" ruler-clean
+     * stroke, on purpose. */
+    private fun drawShapeOnto(eng: CanvasEngine, layer: Layer, pending: PendingShapeAssist) {
+        val path = ShapeAssist.perimeterPoints(pending.candidate)
+        if (path.size < 2) return
+        val brush = pending.brush
+        val renderer = StrokeRenderer(brush, pending.colorArgb, pending.sizeMultiplier, pending.opacityMultiplier)
+        val usesScratch = !brush.buildUp
+        val target = if (usesScratch) eng.scratch() else Canvas(layer.bitmap)
+        val first = path.first()
+        renderer.start(target, InputSample(first.x, first.y, pressure = 1f))
+        for (i in 1 until path.size) {
+            val p = path[i]
+            renderer.moveTo(target, InputSample(p.x, p.y, pressure = 1f))
+        }
+        if (usesScratch) {
+            eng.flattenScratchOnto(
+                layer,
+                brush.strokeOpacityCap,
+                erasing = brush.category == BrushCategory.ERASER,
+                mixing = brush.pigmentMixing,
+                wetness = brush.wetness,
+            )
+        }
     }
 
     private fun cancelStroke() {
@@ -734,6 +913,12 @@ class DrawingCanvasView @JvmOverloads constructor(
         navBaselineSet = false
         hasStrokeDirtyBounds = false
         mirrorRenderers = emptyList()
+        // Deliberately NOT clearing pendingShapeAssist here -- see its own field doc comment for
+        // why it needs to outlive this cleanup (a Snackbar offering it is shown right after this
+        // call, on endStroke's path, and stays alive well past it).
+        capturingShapeAssist = false
+        shapeAssistPoints.clear()
+        shapeAssistBrush = null
         onStrokeActiveChanged?.invoke(false)
     }
 
@@ -823,5 +1008,12 @@ class DrawingCanvasView @JvmOverloads constructor(
     companion object {
         private const val MIN_ZOOM = 0.05f
         private const val MAX_ZOOM = 40f
+
+        // Safety cap on Smart Shape Assist's parallel point capture (see shapeAssistPoints) -- a
+        // very long, slow drag shouldn't grow this list unboundedly. Recognition doesn't need
+        // every sample past this many anyway (ShapeAssist.recognize's Douglas-Peucker simplifies
+        // heavily regardless); this only stops capturing further points, it never affects the
+        // actual dab rendering path above.
+        private const val MAX_SHAPE_ASSIST_POINTS = 3000
     }
 }

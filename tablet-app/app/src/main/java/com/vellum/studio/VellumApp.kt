@@ -6,6 +6,7 @@ import com.vellum.studio.model.CustomBrushRepository
 import com.vellum.studio.model.PaletteRepository
 import com.vellum.studio.model.ProjectRepository
 import com.vellum.studio.model.SettingsRepository
+import com.vellum.studio.model.UserPhotoTemplateRepository
 
 class VellumApp : Application() {
     val repository: ProjectRepository by lazy { ProjectRepository(this) }
@@ -13,6 +14,7 @@ class VellumApp : Application() {
     val academyProgressRepository: AcademyProgressRepository by lazy { AcademyProgressRepository(this) }
     val settingsRepository: SettingsRepository by lazy { SettingsRepository(this) }
     val customBrushRepository: CustomBrushRepository by lazy { CustomBrushRepository(this) }
+    val userPhotoTemplateRepository: UserPhotoTemplateRepository by lazy { UserPhotoTemplateRepository(this) }
 
     override fun onCreate() {
         super.onCreate()
