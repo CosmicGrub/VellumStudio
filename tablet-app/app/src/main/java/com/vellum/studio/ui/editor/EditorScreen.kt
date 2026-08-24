@@ -1,12 +1,16 @@
 package com.vellum.studio.ui.editor
 
+import android.graphics.BitmapFactory
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.slideInHorizontally
 import androidx.compose.animation.slideOutHorizontally
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.draganddrop.dragAndDropTarget
+import androidx.compose.foundation.focusable
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Spacer
@@ -37,6 +41,7 @@ import androidx.compose.material.icons.filled.Print
 import androidx.compose.material.icons.filled.Redo
 import androidx.compose.material.icons.filled.SaveAlt
 import androidx.compose.material.icons.filled.Undo
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
@@ -53,6 +58,7 @@ import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.SnackbarResult
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
@@ -64,8 +70,21 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draganddrop.DragAndDropEvent
+import androidx.compose.ui.draganddrop.DragAndDropTarget
+import androidx.compose.ui.draganddrop.toAndroidDragEvent
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.input.key.Key
+import androidx.compose.ui.input.key.KeyEvent
+import androidx.compose.ui.input.key.KeyEventType
+import androidx.compose.ui.input.key.isCtrlPressed
+import androidx.compose.ui.input.key.isShiftPressed
+import androidx.compose.ui.input.key.key
+import androidx.compose.ui.input.key.onPreviewKeyEvent
+import androidx.compose.ui.input.key.type
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
@@ -88,7 +107,29 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
-@OptIn(ExperimentalMaterial3Api::class)
+// One "[" / "]" press worth of brush-size change -- see handleKeyShortcut. Additive rather than
+// multiplicative, matching how a single keypress-driven nudge behaves in most drawing apps; picked
+// so a single press is a small, easily-repeatable nudge across CanvasEngine's whole size-multiplier
+// range (~39 presses end to end), not a jump big enough to overshoot a precise target size.
+private const val BRUSH_SIZE_STEP = 0.1f
+
+/** Maps both the top-row number keys and the numpad digits to 0-9 for handleKeyShortcut's
+ * opacity shortcut -- a numpad-equipped Bluetooth keyboard should work exactly like the top row. */
+private fun digitForKey(key: Key): Int? = when (key) {
+    Key.Zero, Key.NumPad0 -> 0
+    Key.One, Key.NumPad1 -> 1
+    Key.Two, Key.NumPad2 -> 2
+    Key.Three, Key.NumPad3 -> 3
+    Key.Four, Key.NumPad4 -> 4
+    Key.Five, Key.NumPad5 -> 5
+    Key.Six, Key.NumPad6 -> 6
+    Key.Seven, Key.NumPad7 -> 7
+    Key.Eight, Key.NumPad8 -> 8
+    Key.Nine, Key.NumPad9 -> 9
+    else -> null
+}
+
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
 @Composable
 fun EditorScreen(
     repository: ProjectRepository,
@@ -106,6 +147,11 @@ fun EditorScreen(
     var loading by remember { mutableStateOf(true) }
     var layersPanelOpen by remember { mutableStateOf(false) }
     var colorPickerOpen by remember { mutableStateOf(false) }
+    var printPresetDialogOpen by remember { mutableStateOf(false) }
+    // True while a drag carrying image content is hovering over the canvas -- purely a visual
+    // affordance (see the dashed-border overlay in the canvas Box below), toggled by the
+    // DragAndDropTarget's onEntered/onExited/onDrop/onEnded callbacks.
+    var canvasDragHighlightActive by remember { mutableStateOf(false) }
     var strokesSinceSave by remember { mutableStateOf(0) }
     var undoRedoTick by remember { mutableStateOf(0) }
     val drawingViewRef = remember { mutableStateOf<DrawingCanvasView?>(null) }
@@ -124,6 +170,119 @@ fun EditorScreen(
         val e = engine
         if (m != null && e != null) {
             scope.launch { meta = repository.saveProject(m, e) }
+        }
+    }
+
+    /** Runs the Print flow's chosen [preset] (see [printPresetDialogOpen]'s dialog) -- flatten +
+     * any [Printing.PrintPreset.HIGH_DPI_ARCHIVAL] upscale happen off the main thread (both are
+     * real bitmap-sized work), then [Printing.printBitmap] itself runs back on Main, same "resolve
+     * heavy work off-thread, hand the system UI call back to Main" split the pre-existing code here
+     * already used for plain Standard printing. */
+    fun runPrint(preset: Printing.PrintPreset) {
+        printPresetDialogOpen = false
+        val m = meta
+        val e = engine
+        if (m == null || e == null) return
+        if (e.strokeInProgressLayerId != null) {
+            scope.launch { snackbarHostState.showSnackbar("Finish the current stroke before printing") }
+            return
+        }
+        scope.launch {
+            val prepared = withContext(Dispatchers.Default) {
+                Printing.preparePrintBitmap(e.flatten(), preset)
+            }
+            Printing.printBitmap(context, m.name, prepared.bitmap)
+            if (preset == Printing.PrintPreset.HIGH_DPI_ARCHIVAL && !prepared.archivalUpscaleApplied) {
+                snackbarHostState.showSnackbar("Canvas is already at this device's safe resolution ceiling -- printed at standard resolution")
+            }
+        }
+    }
+
+    // --- Keyboard shortcuts (see handleKeyShortcut below for the full list and how this is wired
+    // up) -- doUndo/doRedo/adjustBrushSize/setOpacityFromDigit are plain functions rather than
+    // being inlined into handleKeyShortcut so the top bar's Undo/Redo IconButtons can call the
+    // exact same logic a keyboard shortcut does, instead of two copies of it drifting apart. ---
+    fun doUndo() {
+        val e = engine ?: return
+        if (!e.undoManager.canUndo) return
+        e.undoManager.undo { id -> e.layers.firstOrNull { it.id == id } }
+        e.bumpRevision()
+        undoRedoTick++
+    }
+
+    fun doRedo() {
+        val e = engine ?: return
+        if (!e.undoManager.canRedo) return
+        e.undoManager.redo { id -> e.layers.firstOrNull { it.id == id } }
+        e.bumpRevision()
+        undoRedoTick++
+    }
+
+    fun adjustBrushSize(delta: Float) {
+        val e = engine ?: return
+        e.brushSizeMultiplier = (e.brushSizeMultiplier + delta)
+            .coerceIn(CanvasEngine.MIN_BRUSH_SIZE_MULTIPLIER, CanvasEngine.MAX_BRUSH_SIZE_MULTIPLIER)
+    }
+
+    fun setOpacityFromDigit(digit: Int) {
+        val e = engine ?: return
+        // Standard "0 means 100%" convention (matches Photoshop/similar apps): the ten keys 1-9/0
+        // map onto the ten round 10% steps, and 100% needs a key too -- 0 is the natural spare.
+        e.brushOpacityMultiplier = if (digit == 0) 1f else digit / 10f
+    }
+
+    /**
+     * Hardware/Bluetooth-keyboard shortcuts for this screen: Ctrl+Z undo, Ctrl+Shift+Z or Ctrl+Y
+     * redo, [ / ] step brush size down/up, 1-9 and 0 set brush opacity to 10%-100%. Also documented
+     * in Settings > Input so they're discoverable outside of the one-time Snackbar hint below.
+     *
+     * Wired via a focusable root (see the Scaffold's modifier) + [onPreviewKeyEvent] rather than
+     * overriding Activity.onKeyDown -- investigated both, and this is the one that's actually
+     * scoped correctly: it only ever fires while EditorScreen (not the gallery, not Settings) is
+     * the visible destination, with no NavGraph-level plumbing needed to gate it. Nothing else in
+     * this screen's composition ever steals focus away from that root in practice -- there's no
+     * TextField living directly in it, and the color-picker/BrushEditorDialog dialogs are each a
+     * genuinely separate Android Window, so they naturally take over key routing while shown and
+     * hand it back on dismiss with no extra bookkeeping needed here.
+     *
+     * Deliberately does NOT attempt a Space+drag-to-pan shortcut. This app's pan/zoom is raw-touch
+     * driven inside DrawingCanvasView (a plain View, not Compose, and one of this project's
+     * hardened files) keyed entirely off MotionEvent tool-type/pointer-id bookkeeping -- there's no
+     * existing "is this pointer allowed to pan" hook a Compose-side "space is held" boolean could
+     * feed into without either reaching into that hardened stylus/finger routing logic directly, or
+     * adding a parallel input path that would only ever be exercised by a mouse pointer (this app
+     * has no TOOL_TYPE_MOUSE handling anywhere today -- fingers already pan for free, and a S Pen's
+     * whole purpose here is to draw, not pan). That combination -- touching hardened routing, to
+     * serve an input device this app doesn't otherwise support -- is exactly the "fragile, not
+     * worth forcing" case the task called out, so it's skipped in favor of the four shortcuts above.
+     */
+    fun handleKeyShortcut(event: KeyEvent): Boolean {
+        if (event.type != KeyEventType.KeyDown) return false
+        if (engine == null) return false
+        return when {
+            event.isCtrlPressed && event.isShiftPressed && event.key == Key.Z -> { doRedo(); true }
+            event.isCtrlPressed && event.key == Key.Z -> { doUndo(); true }
+            event.isCtrlPressed && event.key == Key.Y -> { doRedo(); true }
+            event.key == Key.LeftBracket -> { adjustBrushSize(-BRUSH_SIZE_STEP); true }
+            event.key == Key.RightBracket -> { adjustBrushSize(BRUSH_SIZE_STEP); true }
+            else -> digitForKey(event.key)?.let { setOpacityFromDigit(it); true } ?: false
+        }
+    }
+
+    val keyboardFocusRequester = remember { FocusRequester() }
+    LaunchedEffect(Unit) { keyboardFocusRequester.requestFocus() }
+
+    LaunchedEffect(loading) {
+        if (!loading && !settingsRepository.keyboardShortcutsHintShown) {
+            // Set the moment we decide to show it (not after the Snackbar's dismissed) -- backing
+            // out of the editor mid-Snackbar shouldn't leave it eligible to fire again next project.
+            settingsRepository.keyboardShortcutsHintShown = true
+            snackbarHostState.showSnackbar(
+                message = "Keyboard shortcuts: Ctrl+Z/Y undo/redo, [ ] brush size, 1-9/0 opacity. " +
+                    "More in Settings > Input.",
+                actionLabel = "Got it",
+                duration = SnackbarDuration.Long,
+            )
         }
     }
 
@@ -156,6 +315,11 @@ fun EditorScreen(
     }
 
     Scaffold(
+        modifier = Modifier
+            .fillMaxSize()
+            .focusRequester(keyboardFocusRequester)
+            .focusable()
+            .onPreviewKeyEvent { handleKeyShortcut(it) },
         snackbarHost = { SnackbarHost(snackbarHostState) { Snackbar(it) } },
         topBar = {
             val eng = engine
@@ -168,21 +332,11 @@ fun EditorScreen(
                 },
                 actions = {
                     IconButton(
-                        onClick = {
-                            eng ?: return@IconButton
-                            eng.undoManager.undo { id -> eng.layers.firstOrNull { it.id == id } }
-                            eng.bumpRevision()
-                            undoRedoTick++
-                        },
+                        onClick = ::doUndo,
                         enabled = eng?.undoManager?.canUndo == true,
                     ) { Icon(Icons.Filled.Undo, contentDescription = "Undo") }
                     IconButton(
-                        onClick = {
-                            eng ?: return@IconButton
-                            eng.undoManager.redo { id -> eng.layers.firstOrNull { it.id == id } }
-                            eng.bumpRevision()
-                            undoRedoTick++
-                        },
+                        onClick = ::doRedo,
                         enabled = eng?.undoManager?.canRedo == true,
                     ) { Icon(Icons.Filled.Redo, contentDescription = "Redo") }
 
@@ -300,21 +454,7 @@ fun EditorScreen(
                                 leadingIcon = { Icon(Icons.Filled.Print, contentDescription = null) },
                                 onClick = {
                                     exportMenuOpen = false
-                                    val m = meta
-                                    val e = engine
-                                    if (m != null && e != null) {
-                                        if (e.strokeInProgressLayerId != null) {
-                                            scope.launch { snackbarHostState.showSnackbar("Finish the current stroke before printing") }
-                                        } else {
-                                            // flatten() allocates and composites a full-resolution bitmap - keep it
-                                            // off the main thread so a large multi-layer canvas doesn't jank/ANR
-                                            // right as the print dialog is trying to appear.
-                                            scope.launch {
-                                                val bmp = withContext(Dispatchers.Default) { e.flatten() }
-                                                Printing.printBitmap(context, m.name, bmp)
-                                            }
-                                        }
-                                    }
+                                    printPresetDialogOpen = true
                                 },
                             )
                         }
@@ -329,7 +469,70 @@ fun EditorScreen(
                 else -> {
                     val eng = engine!!
                     Column(Modifier.fillMaxSize()) {
-                        Box(Modifier.weight(1f).fillMaxWidth()) {
+                        Box(
+                            Modifier
+                                .weight(1f)
+                                .fillMaxWidth()
+                                // Drag-and-drop reference import: a photo dragged in from another
+                                // app / a split-screen window drops straight onto the canvas and
+                                // becomes a reference layer via the same CanvasEngine.addImageLayer
+                                // LayersPanel's picker already uses -- zero new import UI. Scoped to
+                                // just this Box (not the whole screen) so a drop only ever lands
+                                // where it visually looks like it's landing.
+                                .dragAndDropTarget(
+                                    shouldStartDragAndDrop = { event ->
+                                        event.toAndroidDragEvent().clipDescription?.hasMimeType("image/*") == true
+                                    },
+                                    target = remember {
+                                        object : DragAndDropTarget {
+                                            override fun onEntered(event: DragAndDropEvent) {
+                                                canvasDragHighlightActive = true
+                                            }
+
+                                            override fun onExited(event: DragAndDropEvent) {
+                                                canvasDragHighlightActive = false
+                                            }
+
+                                            override fun onEnded(event: DragAndDropEvent) {
+                                                canvasDragHighlightActive = false
+                                            }
+
+                                            override fun onDrop(event: DragAndDropEvent): Boolean {
+                                                canvasDragHighlightActive = false
+                                                val currentEngine = engine ?: return false
+                                                val androidEvent = event.toAndroidDragEvent()
+                                                val clipData = androidEvent.clipData ?: return false
+                                                if (clipData.itemCount == 0) return false
+                                                // Cross-app drag content needs an explicit permission
+                                                // grant before this process's ContentResolver can
+                                                // actually read the dragged content:// Uri -- without
+                                                // this, openInputStream below throws
+                                                // SecurityException instead of just failing quietly.
+                                                // Has to happen synchronously here, while the
+                                                // DragEvent is still valid, not after hopping to a
+                                                // coroutine.
+                                                (context as? android.app.Activity)?.requestDragAndDropPermissions(androidEvent)
+                                                val uri = clipData.getItemAt(0).uri ?: return false
+                                                scope.launch {
+                                                    val bitmap = withContext(Dispatchers.IO) {
+                                                        runCatching {
+                                                            context.contentResolver.openInputStream(uri)
+                                                                ?.use { BitmapFactory.decodeStream(it) }
+                                                        }.getOrNull()
+                                                    }
+                                                    if (bitmap != null) {
+                                                        currentEngine.addImageLayer("Reference", bitmap)
+                                                        snackbarHostState.showSnackbar("Reference image added as a new layer")
+                                                    } else {
+                                                        snackbarHostState.showSnackbar("Couldn't import the dropped image")
+                                                    }
+                                                }
+                                                return true
+                                            }
+                                        }
+                                    },
+                                ),
+                        ) {
                             AndroidView(
                                 modifier = Modifier.fillMaxSize(),
                                 factory = { ctx ->
@@ -393,6 +596,17 @@ fun EditorScreen(
                                     onRelease = { if (glViewRef.value === it) glViewRef.value = null },
                                 )
                             }
+
+                            // Purely a visual drop-zone affordance while an image drag hovers over
+                            // the canvas (see the dragAndDropTarget above) -- never touches any
+                            // layer content itself.
+                            if (canvasDragHighlightActive) {
+                                Box(
+                                    Modifier
+                                        .fillMaxSize()
+                                        .border(3.dp, MaterialTheme.colorScheme.primary),
+                                )
+                            }
                         }
                         BrushBar(engine = eng, customBrushRepository = customBrushRepository, modifier = Modifier.fillMaxWidth())
                     }
@@ -432,6 +646,34 @@ fun EditorScreen(
                 }
             }
         }
+    }
+
+    if (printPresetDialogOpen) {
+        AlertDialog(
+            onDismissRequest = { printPresetDialogOpen = false },
+            title = { Text("Print quality") },
+            text = {
+                Column {
+                    Printing.PrintPreset.entries.forEach { preset ->
+                        Text(
+                            "${preset.label}: ${preset.description}",
+                            style = MaterialTheme.typography.bodySmall,
+                            modifier = Modifier.padding(bottom = 8.dp),
+                        )
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = { runPrint(Printing.PrintPreset.HIGH_DPI_ARCHIVAL) }) {
+                    Text(Printing.PrintPreset.HIGH_DPI_ARCHIVAL.label)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { runPrint(Printing.PrintPreset.STANDARD) }) {
+                    Text(Printing.PrintPreset.STANDARD.label)
+                }
+            },
+        )
     }
 }
 

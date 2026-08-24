@@ -92,11 +92,27 @@ class SettingsRepository(context: Context) {
             prefs.edit().putFloat(KEY_PRESSURE_CURVE_GAMMA, value).apply()
         }
 
+    private val keyboardShortcutsHintShownState = mutableStateOf(prefs.getBoolean(KEY_KEYBOARD_SHORTCUTS_HINT_SHOWN, false))
+
+    /**
+     * Whether EditorScreen's one-time "Keyboard shortcuts" Snackbar (see EditorScreen's
+     * handleKeyShortcut doc comment) has already been shown once, ever. EditorScreen sets this to
+     * true the instant it decides to show that Snackbar (not after the Snackbar is dismissed) so a
+     * user backing out mid-Snackbar can't retrigger it project after project.
+     */
+    var keyboardShortcutsHintShown: Boolean
+        get() = keyboardShortcutsHintShownState.value
+        set(value) {
+            keyboardShortcutsHintShownState.value = value
+            prefs.edit().putBoolean(KEY_KEYBOARD_SHORTCUTS_HINT_SHOWN, value).apply()
+        }
+
     private companion object {
         const val KEY_GPU_COMPOSITOR = "experimental_gpu_compositor"
         const val KEY_PAPER_TEXTURE_ENABLED = "paper_texture_enabled"
         const val KEY_PAPER_TEXTURE_STRENGTH = "paper_texture_strength"
         const val KEY_PRESSURE_CURVE_PRESET = "pressure_curve_preset"
         const val KEY_PRESSURE_CURVE_GAMMA = "pressure_curve_gamma"
+        const val KEY_KEYBOARD_SHORTCUTS_HINT_SHOWN = "keyboard_shortcuts_hint_shown"
     }
 }

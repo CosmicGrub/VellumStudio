@@ -62,6 +62,20 @@ fun SettingsScreen(settingsRepository: SettingsRepository, onBack: () -> Unit) {
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
+                Text(
+                    "Keyboard shortcuts",
+                    style = MaterialTheme.typography.bodyMedium,
+                    modifier = Modifier.padding(top = 12.dp),
+                )
+                Text(
+                    "With a hardware or Bluetooth keyboard connected, the editor also responds to: " +
+                        "Ctrl+Z undo, Ctrl+Shift+Z or Ctrl+Y redo, [ and ] to step brush size down/up, " +
+                        "and 1-9 / 0 to set brush opacity to 10%-100%. You can also drag an image in " +
+                        "from another app or a split-screen window and drop it on the canvas to add it " +
+                        "as a reference layer.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
             }
             SettingsCard(title = "Storage") {
                 Text(
