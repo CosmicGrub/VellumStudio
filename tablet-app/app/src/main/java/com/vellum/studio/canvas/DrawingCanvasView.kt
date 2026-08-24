@@ -14,6 +14,7 @@ import android.util.AttributeSet
 import android.view.MotionEvent
 import android.view.View
 import com.vellum.studio.VellumApp
+import kotlin.math.PI
 import kotlin.math.atan2
 import kotlin.math.floor
 import kotlin.math.hypot
@@ -108,6 +109,18 @@ class DrawingCanvasView @JvmOverloads constructor(
         color = 0xFF0288D1.toInt()
     }
 
+    // Pen-hover ghost preview: a light-over-dark double ring (same "readable against any
+    // background" reasoning as drawNumberLabels' white-fill-plus-black-stroke discs, just as a
+    // pure outline here since this previews a brush footprint rather than labeling a region).
+    private val hoverGhostOuterPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        style = Paint.Style.STROKE
+        color = 0xB3FFFFFF.toInt()
+    }
+    private val hoverGhostInnerPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        style = Paint.Style.STROKE
+        color = 0xB3000000.toInt()
+    }
+
     // --- stylus stroke state ---
     private var strokePointerId = -1
     private var strokeRenderer: StrokeRenderer? = null
@@ -115,6 +128,19 @@ class DrawingCanvasView @JvmOverloads constructor(
     private var strokeTargetLayer: Layer? = null
     private var strokeUsesScratch = false
     private var pendingStroke: UndoManager.PendingStroke? = null
+
+    // --- pen-hover preview (ACTION_HOVER_* -- a completely independent MotionEvent stream from
+    // the ACTION_DOWN/MOVE/UP touch events above, delivered via onHoverEvent() below rather than
+    // onTouchEvent(), so this never touches the stylus/finger touch-routing logic at all) ---
+    //
+    // Purely a draw-time onDraw() overlay (see drawHoverGhost) -- same non-destructive contract as
+    // drawNumberLabels/drawPoseGuide, never baked into any layer's pixels.
+    private var hoverActive = false
+    private var hoverIsEraser = false
+    private var hoverCanvasX = 0f
+    private var hoverCanvasY = 0f
+    private var hoverTiltRadians = 0f
+    private var hoverOrientationRadians = 0f
 
     // --- Smart Shape Assist (see ShapeAssist) ---
     //
@@ -358,6 +384,14 @@ class DrawingCanvasView @JvmOverloads constructor(
             canvas.drawRect(rect, selectionPaint)
         }
 
+        // Hidden the instant a real stroke owns input (strokePointerId != -1) -- once ink is
+        // actually landing, a ghost of where the NEXT dab would go is just visual noise, not a
+        // preview. Also only for ToolMode.BRUSH -- Fill/Paint-by-Number/Select don't stamp a brush
+        // footprint at all, so a brush-shaped ghost there would misrepresent what tapping will do.
+        if (hoverActive && strokePointerId == -1 && eng.currentTool == ToolMode.BRUSH) {
+            drawHoverGhost(canvas, eng)
+        }
+
         borderPaint.strokeWidth = 1.5f / currentScale()
         canvas.drawRect(0f, 0f, eng.widthPx.toFloat(), eng.heightPx.toFloat(), borderPaint)
         canvas.restore()
@@ -397,6 +431,48 @@ class DrawingCanvasView @JvmOverloads constructor(
             if (!joint.confident) continue
             canvas.drawCircle(joint.x, joint.y, jointRadius, poseJointPaint)
         }
+    }
+
+    /**
+     * Ghost outline of the brush that would land if the pen touched down right now, at the pen's
+     * last-known hover position -- see [onHoverEvent]. Drawn fresh every frame straight from
+     * [CanvasEngine.currentBrush]/[CanvasEngine.brushSizeMultiplier], the same non-destructive
+     * "computed live in onDraw(), never baked into a layer" contract [drawNumberLabels] and
+     * [drawPoseGuide] already use.
+     *
+     * Sized at full (1.0) pressure -- a hovering pen hasn't committed to any particular press yet,
+     * so showing its fully-pressed footprint (the largest/most-opaque it could land) is the most
+     * useful "what will land" preview, and it also sidesteps needing any pressure reading at all
+     * (hover events generally don't report a meaningful one). The tilt-driven widen/squash here
+     * deliberately mirrors [StrokeRenderer.stampAt]'s own ellipse math -- this is pure, self-
+     * contained brush-shape math with no dependency on stroke state, so re-deriving it here for a
+     * preview is exactly "compose around the public API" rather than editing that hardened file.
+     */
+    private fun drawHoverGhost(canvas: Canvas, eng: CanvasEngine) {
+        val brush = if (hoverIsEraser) {
+            eng.currentBrush.takeIf { it.category == BrushCategory.ERASER } ?: BrushPresets.FlatEraser
+        } else {
+            eng.currentBrush
+        }
+        val diameter = (brush.baseSizePx * eng.brushSizeMultiplier).coerceAtLeast(1f)
+        val tiltNorm = (hoverTiltRadians / (PI.toFloat() / 2f)).coerceIn(0f, 1f)
+        val widen = 1f + (brush.tiltToSize * tiltNorm * 0.9f).coerceIn(0f, 1.6f)
+        val squash = 1f - (brush.tiltToSize * tiltNorm * 0.35f).coerceIn(0f, 0.6f)
+        val radiusX = diameter / 2f * widen
+        val radiusY = diameter / 2f * squash
+
+        val scale = currentScale()
+        hoverGhostOuterPaint.strokeWidth = 3f / scale
+        hoverGhostInnerPaint.strokeWidth = 1.25f / scale
+
+        canvas.save()
+        canvas.translate(hoverCanvasX, hoverCanvasY)
+        if (hoverOrientationRadians != 0f) {
+            canvas.rotate(Math.toDegrees(hoverOrientationRadians.toDouble()).toFloat())
+        }
+        canvas.drawOval(-radiusX, -radiusY, radiusX, radiusY, hoverGhostOuterPaint)
+        canvas.drawOval(-radiusX, -radiusY, radiusX, radiusY, hoverGhostInnerPaint)
+        canvas.restore()
     }
 
     private val dirtyViewRect = RectF()
@@ -503,6 +579,44 @@ class DrawingCanvasView @JvmOverloads constructor(
             }
         }
         return true
+    }
+
+    // ---------------------------------------------------------------- pen-hover preview
+    //
+    // ACTION_HOVER_ENTER/MOVE/EXIT are a distinct MotionEvent stream Android only delivers to
+    // onHoverEvent(), never onTouchEvent() -- a stylus hovering near the glass but not yet
+    // touching it. Entirely separate from the touch dispatch above: this never reads or writes any
+    // of onTouchEvent()'s pointer-ownership state (strokePointerId, selectionPointerId,
+    // navPointerIds), so it cannot change stylus/finger routing or palm rejection in any way.
+    // "toCanvasSpace" is shared with the touch path safely -- both run on the UI thread, so there's
+    // no concurrent-write hazard, only a same-thread read-then-copy exactly like the touch call
+    // sites already do.
+    override fun onHoverEvent(event: MotionEvent): Boolean {
+        when (event.actionMasked) {
+            MotionEvent.ACTION_HOVER_ENTER, MotionEvent.ACTION_HOVER_MOVE -> {
+                val toolType = event.getToolType(0)
+                if (toolType == MotionEvent.TOOL_TYPE_STYLUS || toolType == MotionEvent.TOOL_TYPE_ERASER) {
+                    toCanvasSpace(event.getX(0), event.getY(0))
+                    hoverCanvasX = canvasX
+                    hoverCanvasY = canvasY
+                    hoverTiltRadians = event.getAxisValue(MotionEvent.AXIS_TILT, 0)
+                    hoverOrientationRadians = event.getOrientation(0)
+                    hoverIsEraser = toolType == MotionEvent.TOOL_TYPE_ERASER
+                    hoverActive = true
+                } else {
+                    // A finger doesn't hover the same way a stylus does, but some devices still
+                    // report finger hover -- make sure a stray one can never leave a stale brush
+                    // ghost on screen.
+                    hoverActive = false
+                }
+                invalidate()
+            }
+            MotionEvent.ACTION_HOVER_EXIT -> {
+                hoverActive = false
+                invalidate()
+            }
+        }
+        return super.onHoverEvent(event)
     }
 
     // ---------------------------------------------------------------- bucket fill
@@ -666,8 +780,17 @@ class DrawingCanvasView @JvmOverloads constructor(
 
     // ---------------------------------------------------------------- stylus stroke
 
-    private fun sampleFrom(event: MotionEvent, idx: Int, cx: Float, cy: Float): InputSample {
-        val pressure = event.getPressure(idx).coerceIn(0f, 1f)
+    /** Reads Settings' current pressure-curve gamma -- one SharedPreferences-backed read, cheap
+     * enough to call once per gesture start/move but deliberately not called once PER SAMPLE (see
+     * [moveStroke], which caches this once per ACTION_MOVE rather than once per historical point). */
+    private fun currentPressureGamma(): Float = VellumApp.instance.settingsRepository.pressureCurveGamma
+
+    /** [pressureGamma] is [PressureCurvePreset.LINEAR]'s gamma (1f, a no-op) by default, and every
+     * call site below always passes the caller's own already-read gamma instead of re-reading
+     * Settings per sample -- see [currentPressureGamma]'s doc comment for why. */
+    private fun sampleFrom(event: MotionEvent, idx: Int, cx: Float, cy: Float, pressureGamma: Float): InputSample {
+        val rawPressure = event.getPressure(idx).coerceIn(0f, 1f)
+        val pressure = applyPressureCurve(rawPressure, pressureGamma)
         val tilt = event.getAxisValue(MotionEvent.AXIS_TILT, idx)
         val orientation = event.getOrientation(idx)
         return InputSample(cx, cy, pressure, tilt, orientation)
@@ -722,7 +845,7 @@ class DrawingCanvasView @JvmOverloads constructor(
         }
 
         toCanvasSpace(event.getX(idx), event.getY(idx))
-        val sample = sampleFrom(event, idx, canvasX, canvasY)
+        val sample = sampleFrom(event, idx, canvasX, canvasY, currentPressureGamma())
         renderer.start(strokeTargetCanvas!!, sample)
         renderer.takeDirtyBounds()?.let { invalidateDirty(it) }
         for ((mirrorRenderer, transform) in mirrorRenderers) {
@@ -746,12 +869,15 @@ class DrawingCanvasView @JvmOverloads constructor(
             return
         }
 
+        val pressureGamma = currentPressureGamma()
+
         val histCount = event.historySize
         for (h in 0 until histCount) {
             val hx = event.getHistoricalX(idx, h)
             val hy = event.getHistoricalY(idx, h)
             toCanvasSpace(hx, hy)
-            val pressure = event.getHistoricalPressure(idx, h).coerceIn(0f, 1f)
+            val rawPressure = event.getHistoricalPressure(idx, h).coerceIn(0f, 1f)
+            val pressure = applyPressureCurve(rawPressure, pressureGamma)
             val tilt = event.getHistoricalAxisValue(MotionEvent.AXIS_TILT, idx, h)
             val orientation = event.getHistoricalOrientation(idx, h)
             val histSample = InputSample(canvasX, canvasY, pressure, tilt, orientation)
@@ -765,7 +891,7 @@ class DrawingCanvasView @JvmOverloads constructor(
             }
         }
         toCanvasSpace(event.getX(idx), event.getY(idx))
-        val sample = sampleFrom(event, idx, canvasX, canvasY)
+        val sample = sampleFrom(event, idx, canvasX, canvasY, pressureGamma)
         renderer.moveTo(target, sample)
         for ((mirrorRenderer, transform) in mirrorRenderers) {
             val p = transform(sample.x, sample.y)
