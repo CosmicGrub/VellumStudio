@@ -17,9 +17,15 @@ import kotlin.math.pow
  * `SettingsRepository.pressureCurveGamma`, never in this enum's own [gamma] field for that case.
  */
 enum class PressureCurvePreset(val label: String, val gamma: Float) {
-    SOFT("Soft", 1.8f),
+    // gamma < 1 bows the curve UP (x^gamma > x for x in (0,1)), so a light touch already reads as
+    // most of the way to full effect -- that's "Soft". gamma > 1 bows it DOWN (x^gamma < x), so it
+    // takes real force before the effect ramps up -- that's "Firm". (Confirmed via
+    // applyPressureCurve's own x^gamma math -- these two were previously swapped relative to the
+    // "Soft reaches full effect with a light touch; Firm needs real force" behavior documented
+    // right here and shown verbatim in SettingsScreen's Pressure Curve card.)
+    SOFT("Soft", 0.55f),
     LINEAR("Linear", 1f),
-    FIRM("Firm", 0.55f),
+    FIRM("Firm", 1.8f),
 
     /** Placeholder only -- a CUSTOM curve's real gamma is whatever the slider was last set to,
      * read from `SettingsRepository.pressureCurveGamma`, not from this field. */
