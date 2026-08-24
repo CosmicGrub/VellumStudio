@@ -12,6 +12,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.aspectRatio
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -56,8 +57,10 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import com.vellum.studio.academy.AcademyLibrary
 import com.vellum.studio.academy.AcademyProgressRepository
@@ -66,6 +69,10 @@ import com.vellum.studio.academy.Lesson
 import com.vellum.studio.academy.LessonBlock
 import com.vellum.studio.academy.LessonDemo
 import com.vellum.studio.util.AssetBitmapCache
+import com.vellum.studio.util.FoldPosture
+import com.vellum.studio.util.primaryPaneWeightForHingeAngle
+import com.vellum.studio.util.rememberFoldState
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
@@ -84,6 +91,16 @@ fun LessonScreen(
     val lesson = remember(courseId, lessonId) { AcademyLibrary.lesson(courseId, lessonId) }
     val scope = rememberCoroutineScope()
     val isComplete = lesson != null && "$courseId/$lessonId" in completedKeys
+    // Foldable-aware layout signal only -- same FoldState detection EditorScreen's tabletop split
+    // uses (see EditorScreen's own doc comment on this), reused rather than duplicated here.
+    val foldState = rememberFoldState()
+
+    fun toggleComplete() {
+        scope.launch {
+            if (isComplete) progressRepository.markIncomplete(courseId, lessonId)
+            else progressRepository.markComplete(courseId, lessonId)
+        }
+    }
 
     Scaffold(
         topBar = {
@@ -92,12 +109,7 @@ fun LessonScreen(
                 navigationIcon = { IconButton(onClick = onBack) { Icon(Icons.Filled.ArrowBack, contentDescription = "Back") } },
                 actions = {
                     if (lesson != null) {
-                        IconButton(onClick = {
-                            scope.launch {
-                                if (isComplete) progressRepository.markIncomplete(courseId, lessonId)
-                                else progressRepository.markComplete(courseId, lessonId)
-                            }
-                        }) {
+                        IconButton(onClick = ::toggleComplete) {
                             Icon(
                                 if (isComplete) Icons.Filled.CheckCircle else Icons.Outlined.CheckCircle,
                                 contentDescription = if (isComplete) "Marked complete" else "Mark complete",
@@ -113,31 +125,91 @@ fun LessonScreen(
             Box(Modifier.fillMaxSize().padding(padding))
             return@Scaffold
         }
-        Column(Modifier.fillMaxSize().padding(padding).verticalScroll(rememberScrollState()).padding(horizontal = 16.dp)) {
+        // The tabletop split only earns its keep when there's actually a demo to put in the top
+        // pane -- a lesson with no LessonDemo (see AcademyLibrary) falls back to the normal
+        // single-column layout even in HALF_OPENED_TABLETOP, same as every other posture.
+        if (foldState.posture == FoldPosture.HALF_OPENED_TABLETOP && lesson.demo != null) {
+            TabletopLessonLayout(
+                lesson = lesson,
+                demo = lesson.demo,
+                hingeAngleDegrees = foldState.hingeAngleDegrees,
+                hingeGapDp = with(LocalDensity.current) {
+                    (foldState.hingeBounds?.height() ?: 0).coerceAtLeast(0).toDp()
+                },
+                isComplete = isComplete,
+                onToggleComplete = ::toggleComplete,
+                modifier = Modifier.fillMaxSize().padding(padding),
+            )
+        } else {
+            Column(Modifier.fillMaxSize().padding(padding).verticalScroll(rememberScrollState()).padding(horizontal = 16.dp)) {
+                Spacer(Modifier.height(4.dp))
+                lesson.blocks.forEach { block -> LessonBlockView(block) }
+
+                lesson.demo?.let { demo ->
+                    Spacer(Modifier.height(8.dp))
+                    DemoSection(demo)
+                }
+
+                Spacer(Modifier.height(20.dp))
+                MarkCompleteButton(isComplete, onClick = ::toggleComplete, modifier = Modifier.fillMaxWidth())
+                Spacer(Modifier.height(24.dp))
+            }
+        }
+    }
+}
+
+/**
+ * HALF_OPENED_TABLETOP-only layout: the demo canvas fills the pane above the hinge, everything
+ * else (lesson text, the same Step Through/Watch It Draw controls, and Mark Complete) scrolls in
+ * the pane below it -- mirroring EditorScreen's canvas-above/controls-below tabletop split (see
+ * [primaryPaneWeightForHingeAngle]) instead of this screen's normal single-column phone layout.
+ */
+@Composable
+private fun TabletopLessonLayout(
+    lesson: Lesson,
+    demo: LessonDemo,
+    hingeAngleDegrees: Float?,
+    hingeGapDp: Dp,
+    isComplete: Boolean,
+    onToggleComplete: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val controller = rememberDemoController(demo)
+    val scope = rememberCoroutineScope()
+    val canvasWeight = primaryPaneWeightForHingeAngle(hingeAngleDegrees)
+
+    Column(modifier) {
+        Box(
+            Modifier.weight(canvasWeight).fillMaxWidth().padding(16.dp),
+            contentAlignment = Alignment.Center,
+        ) {
+            DemoCanvasBox(demo, controller, Modifier.fillMaxHeight(), matchHeightConstraintsFirst = true)
+        }
+        Spacer(Modifier.height(hingeGapDp))
+        Column(
+            Modifier
+                .weight(1f - canvasWeight)
+                .fillMaxWidth()
+                .verticalScroll(rememberScrollState())
+                .padding(horizontal = 16.dp),
+        ) {
             Spacer(Modifier.height(4.dp))
             lesson.blocks.forEach { block -> LessonBlockView(block) }
-
-            lesson.demo?.let { demo ->
-                Spacer(Modifier.height(8.dp))
-                DemoSection(demo)
-            }
-
+            Spacer(Modifier.height(8.dp))
+            DemoControlsCard(demo, controller, scope)
             Spacer(Modifier.height(20.dp))
-            Button(
-                onClick = {
-                    scope.launch {
-                        if (isComplete) progressRepository.markIncomplete(courseId, lessonId)
-                        else progressRepository.markComplete(courseId, lessonId)
-                    }
-                },
-                modifier = Modifier.fillMaxWidth(),
-            ) {
-                Icon(if (isComplete) Icons.Filled.CheckCircle else Icons.Outlined.CheckCircle, contentDescription = null)
-                Spacer(Modifier.width(8.dp))
-                Text(if (isComplete) "Marked as complete" else "Mark lesson complete")
-            }
+            MarkCompleteButton(isComplete, onClick = onToggleComplete, modifier = Modifier.fillMaxWidth())
             Spacer(Modifier.height(24.dp))
         }
+    }
+}
+
+@Composable
+private fun MarkCompleteButton(isComplete: Boolean, onClick: () -> Unit, modifier: Modifier = Modifier) {
+    Button(onClick = onClick, modifier = modifier) {
+        Icon(if (isComplete) Icons.Filled.CheckCircle else Icons.Outlined.CheckCircle, contentDescription = null)
+        Spacer(Modifier.width(8.dp))
+        Text(if (isComplete) "Marked as complete" else "Mark lesson complete")
     }
 }
 
@@ -258,22 +330,131 @@ private fun DiagramView(diagram: LessonBlock.Diagram) {
 private enum class DemoUiMode { IDLE, STEPPING, WATCHING }
 
 /**
- * The "see it drawn" panel: one shared [DemoPlayer] canvas, driven either stage-by-stage (paced
- * "demonstration" mode, via the Next button) or straight through (autoplaying "driven" mode, via
- * Watch It Draw) — see the mode split documented on [DemoPlayer].
+ * Hoisted state for the "see it drawn" demo player -- one shared [DemoPlayer] canvas, driven
+ * either stage-by-stage (paced "demonstration" mode, via the Next button) or straight through
+ * (autoplaying "driven" mode, via Watch It Draw) — see the mode split documented on [DemoPlayer].
+ *
+ * Split out of what used to be a single `DemoSection` composable so the canvas ([DemoCanvasBox])
+ * and its controls ([DemoControlsBody]) can be laid out separately -- above and below the hinge --
+ * in [TabletopLessonLayout], while [DemoSection] itself still composes them together unchanged for
+ * every other posture's single-column layout.
  */
+private class DemoController {
+    val player = DemoPlayer(800, 800)
+    var mode by mutableStateOf(DemoUiMode.IDLE)
+    var stageIndex by mutableStateOf(0)
+    var job: Job? = null
+}
+
+@Composable
+private fun rememberDemoController(demo: LessonDemo): DemoController {
+    val controller = remember(demo) { DemoController() }
+    DisposableEffect(demo) { onDispose { controller.job?.cancel() } }
+    return controller
+}
+
+/** The demo canvas image plus its current-stage caption chip -- no controls, no title. Square
+ * (the [DemoPlayer] canvas itself is 800x800); pass [matchHeightConstraintsFirst] = true when the
+ * available *height* (not width) is the binding constraint, e.g. [TabletopLessonLayout]'s pane
+ * above the hinge, so the square sizes off the pane's height instead of overflowing it. */
+@Composable
+private fun DemoCanvasBox(
+    demo: LessonDemo,
+    controller: DemoController,
+    modifier: Modifier = Modifier,
+    matchHeightConstraintsFirst: Boolean = false,
+) {
+    val revision = controller.player.revision
+    val imageBitmap = remember(controller.player, revision) { controller.player.bitmap.asImageBitmap() }
+    Box(
+        modifier
+            .aspectRatio(1f, matchHeightConstraintsFirst = matchHeightConstraintsFirst)
+            .clip(RoundedCornerShape(12.dp))
+            .background(Color.White)
+            .border(1.dp, MaterialTheme.colorScheme.outlineVariant, RoundedCornerShape(12.dp)),
+    ) {
+        Image(bitmap = imageBitmap, contentDescription = "Demo drawing", modifier = Modifier.fillMaxSize())
+        val activeStage = controller.player.activeStageIndex
+        if (activeStage in demo.stages.indices) {
+            Surface(
+                color = MaterialTheme.colorScheme.surface.copy(alpha = 0.92f),
+                shape = RoundedCornerShape(8.dp),
+                modifier = Modifier.align(Alignment.BottomStart).padding(8.dp),
+            ) {
+                Text(
+                    demo.stages[activeStage].caption,
+                    style = MaterialTheme.typography.labelMedium,
+                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
+                )
+            }
+        }
+    }
+}
+
+/** Step Through / Watch It Draw buttons plus the stage-progress row -- no canvas, no title. */
+@Composable
+private fun DemoControlsBody(demo: LessonDemo, controller: DemoController, scope: CoroutineScope) {
+    Row(horizontalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.fillMaxWidth()) {
+        OutlinedButton(
+            onClick = {
+                controller.job?.cancel()
+                controller.player.reset()
+                controller.mode = DemoUiMode.STEPPING
+                controller.stageIndex = 0
+                controller.job = scope.launch { controller.player.playStage(demo.stages[0], stageIndex = 0) }
+            },
+            enabled = demo.stages.isNotEmpty(),
+            modifier = Modifier.weight(1f),
+        ) { Text("Step Through") }
+        Button(
+            onClick = {
+                controller.job?.cancel()
+                controller.player.reset()
+                controller.mode = DemoUiMode.WATCHING
+                controller.job = scope.launch {
+                    controller.player.playAll(demo)
+                    controller.mode = DemoUiMode.IDLE
+                }
+            },
+            enabled = demo.stages.isNotEmpty(),
+            modifier = Modifier.weight(1f),
+        ) {
+            Icon(Icons.Filled.PlayArrow, contentDescription = null, modifier = Modifier.size(18.dp))
+            Spacer(Modifier.width(4.dp))
+            Text("Watch It Draw")
+        }
+    }
+    if (controller.mode == DemoUiMode.STEPPING) {
+        Row(
+            modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text(
+                "Stage ${controller.stageIndex + 1} of ${demo.stages.size}",
+                style = MaterialTheme.typography.labelMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.weight(1f),
+            )
+            TextButton(onClick = {
+                val next = controller.stageIndex + 1
+                if (next < demo.stages.size) {
+                    controller.stageIndex = next
+                    controller.job?.cancel()
+                    controller.job = scope.launch { controller.player.playStage(demo.stages[next], stageIndex = next) }
+                } else {
+                    controller.mode = DemoUiMode.IDLE
+                }
+            }) { Text(if (controller.stageIndex + 1 < demo.stages.size) "Next Stage" else "Done") }
+        }
+    }
+}
+
+/** Title + subtitle + [DemoCanvasBox] + [DemoControlsBody] in one Card -- the normal single-column
+ * "See It Drawn" panel, unchanged in appearance from before [DemoController] existed. */
 @Composable
 private fun DemoSection(demo: LessonDemo) {
-    val player = remember(demo) { DemoPlayer(800, 800) }
+    val controller = rememberDemoController(demo)
     val scope = rememberCoroutineScope()
-    var job by remember { mutableStateOf<Job?>(null) }
-    var mode by remember { mutableStateOf(DemoUiMode.IDLE) }
-    var stageIndex by remember { mutableStateOf(0) }
-    val revision = player.revision
-    val imageBitmap = remember(player, revision) { player.bitmap.asImageBitmap() }
-
-    DisposableEffect(demo) { onDispose { job?.cancel() } }
-
     Card(shape = RoundedCornerShape(16.dp), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)) {
         Column(Modifier.padding(16.dp)) {
             Text("See It Drawn", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
@@ -283,84 +464,28 @@ private fun DemoSection(demo: LessonDemo) {
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier.padding(top = 2.dp, bottom = 10.dp),
             )
-            Box(
-                Modifier
-                    .fillMaxWidth()
-                    .aspectRatio(1f)
-                    .clip(RoundedCornerShape(12.dp))
-                    .background(Color.White)
-                    .border(1.dp, MaterialTheme.colorScheme.outlineVariant, RoundedCornerShape(12.dp)),
-            ) {
-                Image(bitmap = imageBitmap, contentDescription = "Demo drawing", modifier = Modifier.fillMaxSize())
-                val activeStage = player.activeStageIndex
-                if (activeStage in demo.stages.indices) {
-                    Surface(
-                        color = MaterialTheme.colorScheme.surface.copy(alpha = 0.92f),
-                        shape = RoundedCornerShape(8.dp),
-                        modifier = Modifier.align(Alignment.BottomStart).padding(8.dp),
-                    ) {
-                        Text(
-                            demo.stages[activeStage].caption,
-                            style = MaterialTheme.typography.labelMedium,
-                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
-                        )
-                    }
-                }
-            }
+            DemoCanvasBox(demo, controller, Modifier.fillMaxWidth())
             Spacer(Modifier.height(10.dp))
-            Row(horizontalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.fillMaxWidth()) {
-                OutlinedButton(
-                    onClick = {
-                        job?.cancel()
-                        player.reset()
-                        mode = DemoUiMode.STEPPING
-                        stageIndex = 0
-                        job = scope.launch { player.playStage(demo.stages[0], stageIndex = 0) }
-                    },
-                    enabled = demo.stages.isNotEmpty(),
-                    modifier = Modifier.weight(1f),
-                ) { Text("Step Through") }
-                Button(
-                    onClick = {
-                        job?.cancel()
-                        player.reset()
-                        mode = DemoUiMode.WATCHING
-                        job = scope.launch {
-                            player.playAll(demo)
-                            mode = DemoUiMode.IDLE
-                        }
-                    },
-                    enabled = demo.stages.isNotEmpty(),
-                    modifier = Modifier.weight(1f),
-                ) {
-                    Icon(Icons.Filled.PlayArrow, contentDescription = null, modifier = Modifier.size(18.dp))
-                    Spacer(Modifier.width(4.dp))
-                    Text("Watch It Draw")
-                }
-            }
-            if (mode == DemoUiMode.STEPPING) {
-                Row(
-                    modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    Text(
-                        "Stage ${stageIndex + 1} of ${demo.stages.size}",
-                        style = MaterialTheme.typography.labelMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier.weight(1f),
-                    )
-                    TextButton(onClick = {
-                        val next = stageIndex + 1
-                        if (next < demo.stages.size) {
-                            stageIndex = next
-                            job?.cancel()
-                            job = scope.launch { player.playStage(demo.stages[next], stageIndex = next) }
-                        } else {
-                            mode = DemoUiMode.IDLE
-                        }
-                    }) { Text(if (stageIndex + 1 < demo.stages.size) "Next Stage" else "Done") }
-                }
-            }
+            DemoControlsBody(demo, controller, scope)
+        }
+    }
+}
+
+/** Title + subtitle + [DemoControlsBody] in a Card, deliberately WITHOUT [DemoCanvasBox] -- the
+ * canvas already lives in [TabletopLessonLayout]'s separate pane above the hinge, sharing the same
+ * [controller], so this is the bottom-pane half of that split rather than a full [DemoSection]. */
+@Composable
+private fun DemoControlsCard(demo: LessonDemo, controller: DemoController, scope: CoroutineScope) {
+    Card(shape = RoundedCornerShape(16.dp), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)) {
+        Column(Modifier.padding(16.dp)) {
+            Text("See It Drawn", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+            Text(
+                "Watch the technique happen start to finish, or step through it one stage at a time at your own pace.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(top = 2.dp, bottom = 10.dp),
+            )
+            DemoControlsBody(demo, controller, scope)
         }
     }
 }

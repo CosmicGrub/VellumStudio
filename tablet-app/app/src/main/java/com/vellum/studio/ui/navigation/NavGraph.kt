@@ -19,12 +19,14 @@ import com.vellum.studio.ui.academy.LessonScreen
 import com.vellum.studio.ui.coloringbook.ColoringBookScreen
 import com.vellum.studio.ui.connect.ConnectScreen
 import com.vellum.studio.ui.editor.EditorScreen
+import com.vellum.studio.ui.editor.QuickSketchScreen
 import com.vellum.studio.ui.gallery.GalleryScreen
 import com.vellum.studio.ui.settings.SettingsScreen
 
 object Routes {
     const val GALLERY = "gallery"
     const val EDITOR = "editor/{projectId}"
+    const val QUICK_SKETCH = "quick_sketch/{projectId}"
     const val CONNECT = "connect"
     const val SETTINGS = "settings"
     const val COLORING_BOOK = "coloring_book"
@@ -32,6 +34,7 @@ object Routes {
     const val COURSE_DETAIL = "academy/course/{courseId}"
     const val LESSON = "academy/course/{courseId}/lesson/{lessonId}"
     fun editor(projectId: String) = "editor/$projectId"
+    fun quickSketch(projectId: String) = "quick_sketch/$projectId"
     fun courseDetail(courseId: String) = "academy/course/$courseId"
     fun lesson(courseId: String, lessonId: String) = "academy/course/$courseId/lesson/$lessonId"
 }
@@ -51,6 +54,7 @@ fun VellumNavGraph(
             GalleryScreen(
                 repository = repository,
                 onOpenProject = { id -> navController.navigate(Routes.editor(id)) },
+                onOpenQuickSketch = { id -> navController.navigate(Routes.quickSketch(id)) },
                 onOpenConnect = { navController.navigate(Routes.CONNECT) },
                 onOpenSettings = { navController.navigate(Routes.SETTINGS) },
                 onOpenColoringBook = { navController.navigate(Routes.COLORING_BOOK) },
@@ -67,6 +71,19 @@ fun VellumNavGraph(
                 paletteRepository = paletteRepository,
                 settingsRepository = settingsRepository,
                 customBrushRepository = customBrushRepository,
+                projectId = projectId,
+                onBack = { navController.popBackStack() },
+            )
+        }
+        composable(
+            route = Routes.QUICK_SKETCH,
+            arguments = listOf(navArgument("projectId") { type = NavType.StringType }),
+        ) { backStackEntry ->
+            val projectId = backStackEntry.arguments?.getString("projectId").orEmpty()
+            QuickSketchScreen(
+                repository = repository,
+                paletteRepository = paletteRepository,
+                settingsRepository = settingsRepository,
                 projectId = projectId,
                 onBack = { navController.popBackStack() },
             )

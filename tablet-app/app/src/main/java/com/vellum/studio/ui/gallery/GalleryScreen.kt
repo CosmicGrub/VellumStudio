@@ -63,6 +63,7 @@ import com.vellum.studio.model.CanvasSizePreset
 import com.vellum.studio.model.CanvasSizePresets
 import com.vellum.studio.model.ProjectRepository
 import com.vellum.studio.model.ProjectSummary
+import com.vellum.studio.util.isCompactWidth
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -70,11 +71,17 @@ import java.io.File
 import java.text.DateFormat
 import java.util.Date
 
+// Default size for the cover-screen "Quick Sketch" quick-capture action -- deliberately small
+// (a cover-screen canvas is never going to be viewed at Studio-tier resolution) and square (no
+// portrait/landscape choice to make, since making that choice is exactly what quick capture skips).
+private const val QUICK_SKETCH_CANVAS_PX = 1024
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun GalleryScreen(
     repository: ProjectRepository,
     onOpenProject: (String) -> Unit,
+    onOpenQuickSketch: (String) -> Unit,
     onOpenConnect: () -> Unit,
     onOpenSettings: () -> Unit,
     onOpenColoringBook: () -> Unit,
@@ -85,6 +92,11 @@ fun GalleryScreen(
     var showNewCanvasDialog by remember { mutableStateOf(false) }
     var revision by remember { mutableStateOf(0) }
     val scope = rememberCoroutineScope()
+    // Cover-screen (or any similarly narrow) window: lead with one-tap Quick Sketch instead of the
+    // full New Canvas dialog's size/preset choices -- see QuickSketchScreen's own doc comment for
+    // why that's a purpose-built layout rather than a shrunk Editor. The full dialog is still one
+    // tap away via the top-bar "+" that only appears in this same narrow case, so nothing is lost.
+    val compactWidth = isCompactWidth()
 
     LaunchedEffect(revision) {
         loading = true
@@ -97,6 +109,11 @@ fun GalleryScreen(
             TopAppBar(
                 title = { Text("Vellum Studio", fontWeight = FontWeight.SemiBold) },
                 actions = {
+                    if (compactWidth) {
+                        IconButton(onClick = { showNewCanvasDialog = true }) {
+                            Icon(Icons.Filled.Add, contentDescription = "New canvas with size options")
+                        }
+                    }
                     IconButton(onClick = onOpenAcademy) {
                         Icon(Icons.Filled.School, contentDescription = "Academy")
                     }
@@ -113,11 +130,25 @@ fun GalleryScreen(
             )
         },
         floatingActionButton = {
-            ExtendedFloatingActionButton(
-                onClick = { showNewCanvasDialog = true },
-                icon = { Icon(Icons.Filled.Add, contentDescription = null) },
-                text = { Text("New Canvas") },
-            )
+            if (compactWidth) {
+                ExtendedFloatingActionButton(
+                    onClick = {
+                        scope.launch {
+                            val (meta, engine) = repository.createProject("Quick Sketch", QUICK_SKETCH_CANVAS_PX, QUICK_SKETCH_CANVAS_PX)
+                            engine.layers.forEach { it.bitmap.recycle() }
+                            onOpenQuickSketch(meta.id)
+                        }
+                    },
+                    icon = { Icon(Icons.Filled.Brush, contentDescription = null) },
+                    text = { Text("Quick Sketch") },
+                )
+            } else {
+                ExtendedFloatingActionButton(
+                    onClick = { showNewCanvasDialog = true },
+                    icon = { Icon(Icons.Filled.Add, contentDescription = null) },
+                    text = { Text("New Canvas") },
+                )
+            }
         },
     ) { padding ->
         Box(Modifier.fillMaxSize().padding(padding)) {
