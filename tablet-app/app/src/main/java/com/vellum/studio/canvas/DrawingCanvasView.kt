@@ -209,6 +209,15 @@ class DrawingCanvasView @JvmOverloads constructor(
     private var navLastAngle = 0f
     private var zoomAccum = 1f
 
+    // handleFingerMove() only ever reads index 0/1 (see handleFingerDown's comment on why a 3rd+
+    // finger is tracked but never consulted for the actual pinch/rotate math) -- reused here for
+    // the same reason samplePoint above is reused, instead of a fresh FloatArray(navPointerIds.size)
+    // on every single ACTION_MOVE: a fast two-finger pan/zoom/rotate drag can call this dozens of
+    // times a second, and allocating (and then GC'ing) two small arrays on every one of those frames
+    // is exactly the kind of avoidable per-frame garbage that shows up as jank during fast navigation.
+    private val navMoveXs = FloatArray(2)
+    private val navMoveYs = FloatArray(2)
+
     fun attachEngine(newEngine: CanvasEngine) {
         engine = newEngine
         hasInitializedView = false
@@ -1070,10 +1079,11 @@ class DrawingCanvasView @JvmOverloads constructor(
 
     private fun handleFingerMove(event: MotionEvent) {
         if (navPointerIds.isEmpty()) return
-        val xs = FloatArray(navPointerIds.size)
-        val ys = FloatArray(navPointerIds.size)
+        val xs = navMoveXs
+        val ys = navMoveYs
         var count = 0
         for (pid in navPointerIds) {
+            if (count >= xs.size) break
             val idx = event.findPointerIndex(pid)
             if (idx == -1) continue
             xs[count] = event.getX(idx)
