@@ -392,4 +392,14 @@ class CanvasEngine(val widthPx: Int, val heightPx: Int) {
         strokeScratch.recycle()
         undoManager.clear()
     }
+
+    companion object {
+        // Single source of truth for BrushBar's Size/Opacity sliders (see BrushBar.kt) and for
+        // EditorScreen's bracket-key/number-key keyboard shortcuts, which need the exact same
+        // bounds to clamp against rather than a second, independently-maintained copy of them.
+        const val MIN_BRUSH_SIZE_MULTIPLIER = 0.15f
+        const val MAX_BRUSH_SIZE_MULTIPLIER = 4f
+        const val MIN_BRUSH_OPACITY_MULTIPLIER = 0.05f
+        const val MAX_BRUSH_OPACITY_MULTIPLIER = 1f
+    }
 }

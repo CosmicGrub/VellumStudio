@@ -113,7 +113,7 @@ fun BrushBar(engine: CanvasEngine, customBrushRepository: CustomBrushRepository,
             Slider(
                 value = engine.brushSizeMultiplier,
                 onValueChange = { engine.brushSizeMultiplier = it },
-                valueRange = 0.15f..4f,
+                valueRange = CanvasEngine.MIN_BRUSH_SIZE_MULTIPLIER..CanvasEngine.MAX_BRUSH_SIZE_MULTIPLIER,
                 modifier = Modifier.weight(1f),
             )
         }
@@ -122,7 +122,7 @@ fun BrushBar(engine: CanvasEngine, customBrushRepository: CustomBrushRepository,
             Slider(
                 value = engine.brushOpacityMultiplier,
                 onValueChange = { engine.brushOpacityMultiplier = it },
-                valueRange = 0.05f..1f,
+                valueRange = CanvasEngine.MIN_BRUSH_OPACITY_MULTIPLIER..CanvasEngine.MAX_BRUSH_OPACITY_MULTIPLIER,
                 modifier = Modifier.weight(1f),
             )
         }
