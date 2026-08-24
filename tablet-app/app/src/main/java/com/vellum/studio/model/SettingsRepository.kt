@@ -4,6 +4,7 @@ import android.content.Context
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
+import com.vellum.studio.canvas.PressureCurvePreset
 
 /**
  * Small, app-wide settings store backed by [android.content.SharedPreferences] — a plain
@@ -57,9 +58,45 @@ class SettingsRepository(context: Context) {
             prefs.edit().putFloat(KEY_PAPER_TEXTURE_STRENGTH, value).apply()
         }
 
+    private val pressureCurvePresetState = mutableStateOf(
+        prefs.getString(KEY_PRESSURE_CURVE_PRESET, null)
+            ?.let { name -> PressureCurvePreset.entries.firstOrNull { it.name == name } }
+            ?: PressureCurvePreset.LINEAR,
+    )
+    private val pressureCurveGammaState = mutableStateOf(prefs.getFloat(KEY_PRESSURE_CURVE_GAMMA, PressureCurvePreset.LINEAR.gamma))
+
+    /**
+     * Which preset chip is selected in Settings' "Pressure curve" card -- purely for the UI to know
+     * which chip to highlight. The actual gamma DrawingCanvasView reads is always
+     * [pressureCurveGamma]; picking a non-[PressureCurvePreset.CUSTOM] preset here immediately
+     * snaps [pressureCurveGamma] to that preset's own fixed value, so the two never disagree.
+     * Dragging the continuous slider instead sets this to [PressureCurvePreset.CUSTOM] (see
+     * SettingsScreen) without touching this setter's snap-to-preset behavior.
+     */
+    var pressureCurvePreset: PressureCurvePreset
+        get() = pressureCurvePresetState.value
+        set(value) {
+            pressureCurvePresetState.value = value
+            prefs.edit().putString(KEY_PRESSURE_CURVE_PRESET, value.name).apply()
+            if (value != PressureCurvePreset.CUSTOM) {
+                pressureCurveGamma = value.gamma
+            }
+        }
+
+    /** The gamma actually fed into [com.vellum.studio.canvas.applyPressureCurve] at the input
+     * layer -- always current regardless of which preset (if any) it matches. */
+    var pressureCurveGamma: Float
+        get() = pressureCurveGammaState.value
+        set(value) {
+            pressureCurveGammaState.value = value
+            prefs.edit().putFloat(KEY_PRESSURE_CURVE_GAMMA, value).apply()
+        }
+
     private companion object {
         const val KEY_GPU_COMPOSITOR = "experimental_gpu_compositor"
         const val KEY_PAPER_TEXTURE_ENABLED = "paper_texture_enabled"
         const val KEY_PAPER_TEXTURE_STRENGTH = "paper_texture_strength"
+        const val KEY_PRESSURE_CURVE_PRESET = "pressure_curve_preset"
+        const val KEY_PRESSURE_CURVE_GAMMA = "pressure_curve_gamma"
     }
 }
