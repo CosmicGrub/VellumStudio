@@ -59,6 +59,26 @@ android {
         resources {
             excludes += "/META-INF/{AL2.0,LGPL2.1}"
         }
+        // 16 KB native-library page-size alignment (investigated 2026-08-23, per Android's own
+        // developer.android.com/guide/practices/page-sizes guidance): AGP zip-aligns bundled .so
+        // entries to 16 KB automatically once on AGP 8.5.1+ (this project is on 8.7.2), and that's
+        // confirmed actually happening -- `zipalign -c -v -P 16 4` against the built debug APK
+        // reports every lib/arm64-v8a/*.so entry OK with zero extra config here. That's zip-level
+        // alignment only, though; it can't retroactively fix a prebuilt .so's own ELF LOAD-segment
+        // alignment (its PT_LOAD p_align, baked in at link time), which is the separate thing a
+        // "not 16 KB page aligned" runtime compatibility warning is actually about. Direct ELF
+        // program-header inspection of what's actually bundled today found:
+        //   - libopencv_java4.so (org.opencv:opencv:4.14.0, below) -- ALREADY 16384-byte aligned.
+        //   - libandroidx.graphics.path.so (androidx.graphics:graphics-path, pulled in transitively
+        //     at 1.0.1) -- ALREADY 16384-byte aligned.
+        //   - libxeno_native.so, bundled by com.google.mlkit:pose-detection-accurate:17.0.0's own
+        //     native runtime (below) -- still 4096-byte aligned, i.e. the one real offender left.
+        // So the two libs a warning dialog would historically have been attributed to are already
+        // fine as currently pinned; nothing here needed a packaging change. The ML Kit one is a
+        // closed-source prebuilt (re-linking it from source is exactly as out-of-scope as re-linking
+        // OpenCV's own .so would be), and Google's Maven index has no newer STABLE release of that
+        // artifact to try -- only 17.0.1-beta*/18.0.0-beta* prereleases exist, unverified for this
+        // and not something to take on for a "cost-free AI" feature without a stable line to pin to.
     }
 }
 

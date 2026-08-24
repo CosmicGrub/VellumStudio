@@ -12,6 +12,7 @@ import androidx.compose.material.icons.filled.ArrowBack
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -26,6 +27,8 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import com.vellum.studio.BuildConfig
+import com.vellum.studio.canvas.PressureCurvePreset
+import com.vellum.studio.canvas.PressureCurveRange
 import com.vellum.studio.model.SettingsRepository
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -57,6 +60,20 @@ fun SettingsScreen(settingsRepository: SettingsRepository, onBack: () -> Unit) {
                     "Drawing is stylus-only by design: the S Pen (or eraser end) always draws, one finger pans, and two fingers " +
                         "pinch-zoom and rotate. While the pen is down, touch input is ignored to prevent palm smudges.",
                     style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                Text(
+                    "Keyboard shortcuts",
+                    style = MaterialTheme.typography.bodyMedium,
+                    modifier = Modifier.padding(top = 12.dp),
+                )
+                Text(
+                    "With a hardware or Bluetooth keyboard connected, the editor also responds to: " +
+                        "Ctrl+Z undo, Ctrl+Shift+Z or Ctrl+Y redo, [ and ] to step brush size down/up, " +
+                        "and 1-9 / 0 to set brush opacity to 10%-100%. You can also drag an image in " +
+                        "from another app or a split-screen window and drop it on the canvas to add it " +
+                        "as a reference layer.",
+                    style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             }
@@ -99,6 +116,45 @@ fun SettingsScreen(settingsRepository: SettingsRepository, onBack: () -> Unit) {
                             modifier = Modifier.weight(1f),
                         )
                     }
+                }
+            }
+            SettingsCard(title = "Pressure curve") {
+                Text(
+                    "Shapes how S Pen pressure translates into brush size and opacity. Soft reaches " +
+                        "full effect with a light touch; Firm needs real force before it kicks in; " +
+                        "Linear passes pressure through unchanged. Drag the gamma slider directly for " +
+                        "anything in between — it always reflects exactly what's applied.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                Row(
+                    Modifier.fillMaxWidth().padding(top = 12.dp),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    listOf(PressureCurvePreset.SOFT, PressureCurvePreset.LINEAR, PressureCurvePreset.FIRM).forEach { preset ->
+                        FilterChip(
+                            selected = settingsRepository.pressureCurvePreset == preset,
+                            onClick = { settingsRepository.pressureCurvePreset = preset },
+                            label = { Text(preset.label) },
+                        )
+                    }
+                }
+                Row(Modifier.fillMaxWidth().padding(top = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Text("Gamma", style = MaterialTheme.typography.labelSmall, modifier = Modifier.padding(end = 8.dp))
+                    Slider(
+                        value = settingsRepository.pressureCurveGamma,
+                        onValueChange = { gamma ->
+                            settingsRepository.pressureCurveGamma = gamma
+                            settingsRepository.pressureCurvePreset = PressureCurvePreset.CUSTOM
+                        },
+                        valueRange = PressureCurveRange.MIN_GAMMA..PressureCurveRange.MAX_GAMMA,
+                        modifier = Modifier.weight(1f),
+                    )
+                    Text(
+                        String.format("%.2f", settingsRepository.pressureCurveGamma),
+                        style = MaterialTheme.typography.labelSmall,
+                        modifier = Modifier.padding(start = 8.dp),
+                    )
                 }
             }
             SettingsCard(title = "Experimental") {
