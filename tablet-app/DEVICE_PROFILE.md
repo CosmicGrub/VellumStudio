@@ -77,3 +77,51 @@ outside this task's scope. This matches the prior phase's own documented finding
 real drag gesture is highly non-deterministic under synthetic/automated touch on this device family.
 Final confirmation of the live drop (reference layer appearing in LayersPanel + Snackbar) still
 needs a human to drag a real photo onto the canvas by hand.
+
+## 2026-08-25: merged main (The Conservation Lab: six phases culminating in Academy content-as-data)
+
+Six commits landed on `main` since the last merge (`54e652b`..`1c93324`) -- a real JVM unit test
+module, a durable on-device diagnostic log, project file schema versioning/migration, an Android CI
+workflow plus release minification, Macrobenchmark tooling, and the Academy content-as-data format
+with a PhotoConverter golden-master fixture -- and were merged into this
+branch (`46b9fcf`). One real conflict, in `SettingsScreen.kt`: this branch and `main` had each
+independently fixed the same "Settings screen unscrollable" bug (device-branch commit `e17db8a`
+vs. `main`'s `9deb321`, both wrapping the root `Column` in `verticalScroll`), differing only in
+whether `.padding(24.dp)` was applied before or after `.verticalScroll(...)`. Took `main`'s version
+whole -- it carries an explanatory code comment about why the fix is in scope (the gap predates the
+Diagnostics card that commit was actually adding) and keeps this branch a thin diff on `main` rather
+than a competing implementation of the same fix. No other conflicts.
+
+On-device verification this session (`R52X101MB6W`):
+
+- **Tests**: `:app:testDebugUnitTest` run fresh (`--rerun-tasks`, all 24 tasks executed): 64/64 tests
+  pass, 0 failures/errors across all 10 test classes -- matches the count from `main`'s own
+  verification pass exactly.
+- **Build**: `:app:assembleDebug` and `:app:assembleRelease` both succeed (88 tasks, 39 executed + 20
+  from cache + 29 up-to-date). `minifyReleaseWithR8` and `lintVitalRelease` both completed cleanly,
+  confirming Phase 4's R8 minification config still holds on this branch's merged tree.
+- **Install**: force-stopped the existing install, then `adb install -r` the new debug APK over it;
+  launched cleanly, `MainActivity` resumed, zero `AndroidRuntime`/`FATAL EXCEPTION`/`Exception`
+  entries in the app's own pid-filtered logcat for the whole session.
+- **Gallery**: all 8 real projects load with correct thumbnails/dates (The Starry Night,
+  The_Milkmaid_Test, The Great Wave off, Spiral Bloom, Interlocking Triangle, The Anatomy, Lotus
+  Mandala, 2 Untitled).
+- **Editor / schema versioning**: opened "The Starry Night" -- full drawing content intact, both
+  real layers present (locked "Line Art" + "Coloring") with working opacity sliders. Confirms
+  Phase 3's schema migration (already verified once on `main`, now re-verified after merging into
+  this branch) did not corrupt this device's real on-disk project data.
+- **Settings > Pressure curve / Diagnostics**: both cards render past the merged scroll fix. Soft
+  preset shows gamma 0.55 (<1.0), confirming the gamma-inversion fix (`51422c5`) is still intact on
+  this branch. Diagnostics card shows a live on-device event log (a real timestamped
+  `[Lifecycle] App started (samsung SM-X518U, Android 16 (API 36), Vellum Studio 0.1.0)` entry from
+  this exact session), confirming the durable diagnostic log works end-to-end here too.
+- **Academy / content-as-data migration**: opened "Drawing From Your Own Photos" (the course Phase
+  6 migrated to the new JSON format) -- course detail shows 3 lessons / "Taught by Rowan" correctly,
+  and Lesson 1 ("Turning a Photo Into a Coloring Page") renders its Heading, Paragraph, BulletList,
+  and Tip blocks correctly from the JSON asset, including em-dashes and the arrow (->) glyph.
+- **Known pre-existing/out-of-scope item, re-confirmed, not a regression**: the debug-build "Android
+  App Compatibility" 16 KB page-alignment dialog (same four libraries as previously documented)
+  reappears on first launch after install; already tracked above and on `main`.
+
+Only the `SettingsScreen.kt` scroll-order conflict needed a judgment call; everything else merged,
+built, and ran clean.
