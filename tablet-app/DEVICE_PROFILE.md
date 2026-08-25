@@ -53,3 +53,27 @@ additive from `main`):
   additions to `EditorScreen`, none device-specific. Worth a real check on this device specifically
   since a Tab S9 FE is more likely than other test devices to have a physical keyboard cover
   attached in practice — verified on-device this session, see below.
+
+## 2026-08-24: merged main (reference-image drag-and-drop fix)
+
+Commit `ab284ba` landed on `main` and was merged into this branch with no conflicts, touching only
+`EditorScreen.kt` (91 insertions / 66 deletions, no hardened canvas/touch-routing files involved).
+Root cause and fix are UI-layer and device-agnostic: Compose's `Modifier.dragAndDropTarget` on the
+canvas `Box` never received platform drag events because a real `android.view.View`
+(`DrawingCanvasView`, plus the optional GL compositor overlay) fully overlaps it in the native View
+hierarchy and intercepts `ACTION_DRAG_STARTED` first. Fix moves drag handling to a single
+`View.OnDragListener` (`referenceImageDragListener`) attached directly to both AndroidViews.
+
+On-device verification this session (`R52X101MB6W`): `:app:compileDebugKotlin` and
+`:app:assembleDebug` both succeed, the merged APK installs over the existing one, and the app
+launches and navigates cleanly between the canvas gallery and the Editor screen (confirmed via
+`adb exec-out screencap`) with zero `AndroidRuntime`/`FATAL EXCEPTION` logcat entries across the
+whole session. Did **not** obtain a live end-to-end confirmation of an actual cross-app drag
+producing a new reference layer: this device has other personal apps installed, and blind
+recents/app-switch navigation (`KEYCODE_APP_SWITCH`) proved unreliable for staging split-screen
+here — it surfaced unrelated foreground apps unpredictably rather than opening an overview grid, so
+further blind UI automation down that path was abandoned rather than risk poking around apps
+outside this task's scope. This matches the prior phase's own documented finding that Samsung's
+real drag gesture is highly non-deterministic under synthetic/automated touch on this device family.
+Final confirmation of the live drop (reference layer appearing in LayersPanel + Snackbar) still
+needs a human to drag a real photo onto the canvas by hand.
