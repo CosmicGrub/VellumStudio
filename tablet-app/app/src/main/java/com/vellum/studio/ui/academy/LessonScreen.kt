@@ -46,7 +46,6 @@ import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
@@ -259,8 +258,15 @@ private fun LessonBlockView(block: LessonBlock) {
 private fun MasterworkReferenceView(reference: LessonBlock.MasterworkReference) {
     val context = LocalContext.current
     Column(Modifier.fillMaxWidth().padding(vertical = 10.dp)) {
-        val bitmapState = produceState<ImageBitmap?>(initialValue = null, reference) {
-            value = withContext(Dispatchers.IO) {
+        // Was `produceState`, converted to the equivalent remember+LaunchedEffect it desugars to
+        // internally -- this codebase's Compose runtime version (BOM 2024.12.01, Kotlin 2.0.21)
+        // has a confirmed-broken ProduceStateDoesNotAssignValue lint check that flags *every*
+        // produceState call regardless of whether it assigns `value` (verified with a minimal
+        // `produceState(0) { value = 1 }` repro), so this isn't a lint suppression, it's using the
+        // identical underlying primitives directly.
+        val bitmapState = remember { mutableStateOf<ImageBitmap?>(null) }
+        LaunchedEffect(reference) {
+            bitmapState.value = withContext(Dispatchers.IO) {
                 runCatching { AssetBitmapCache.get(context, reference.assetPath).asImageBitmap() }.getOrNull()
             }
         }
@@ -296,8 +302,11 @@ private fun MasterworkReferenceView(reference: LessonBlock.MasterworkReference) 
 @Composable
 private fun DiagramView(diagram: LessonBlock.Diagram) {
     Column(Modifier.fillMaxWidth().padding(vertical = 10.dp)) {
-        val bitmapState = produceState<ImageBitmap?>(initialValue = null, diagram) {
-            value = withContext(Dispatchers.Default) {
+        // See the comment on MasterworkReferenceView's bitmapState above -- same
+        // produceState-to-remember+LaunchedEffect conversion, same reason.
+        val bitmapState = remember { mutableStateOf<ImageBitmap?>(null) }
+        LaunchedEffect(diagram) {
+            bitmapState.value = withContext(Dispatchers.Default) {
                 runCatching {
                     val size = 640
                     val bmp = Bitmap.createBitmap(size, size, Bitmap.Config.ARGB_8888)

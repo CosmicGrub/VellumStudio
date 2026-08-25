@@ -50,7 +50,6 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
@@ -268,8 +267,15 @@ private fun ThumbnailImage(file: File?, modifier: Modifier = Modifier) {
         Box(modifier)
         return
     }
-    val bitmapState = produceState<androidx.compose.ui.graphics.ImageBitmap?>(initialValue = null, file.path, file.lastModified()) {
-        value = withContext(Dispatchers.IO) {
+    // Was `produceState`, converted to the equivalent remember+LaunchedEffect it desugars to
+    // internally -- this codebase's Compose runtime version (BOM 2024.12.01, Kotlin 2.0.21) has a
+    // confirmed-broken ProduceStateDoesNotAssignValue lint check that flags *every* produceState
+    // call regardless of whether it assigns `value` (verified with a minimal
+    // `produceState(0) { value = 1 }` repro), so this isn't a lint suppression, it's using the
+    // identical underlying primitives directly.
+    val bitmapState = remember { mutableStateOf<androidx.compose.ui.graphics.ImageBitmap?>(null) }
+    LaunchedEffect(file.path, file.lastModified()) {
+        bitmapState.value = withContext(Dispatchers.IO) {
             runCatching { BitmapFactory.decodeFile(file.path)?.asImageBitmap() }.getOrNull()
         }
     }

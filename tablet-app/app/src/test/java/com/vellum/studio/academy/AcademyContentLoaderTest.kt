@@ -188,4 +188,63 @@ class AcademyContentLoaderTest {
         // here) reproduces the exact same, already-proven-correct domain objects either way.
         assertEquals(course, AcademyContentLoader.parseAndValidate(file.readText()))
     }
+
+    /**
+     * Same end-to-end proof as the photo-reference-tools test above, for the second and third
+     * courses migrated to this format: [CourseDigitalFundamentals] and [CourseWatercolor]. Both were
+     * picked for the same reason the pilot was -- every block in each was already plain
+     * Heading/Paragraph/BulletList/Tip content, no [LessonBlock.Diagram] and no [LessonDemo].
+     */
+    @Test fun `the real migrated digital-fundamentals course loads and validates end-to-end`() {
+        val file = File("src/main/assets/academy/digital-fundamentals.json")
+        assertTrue("expected bundled asset at ${file.absolutePath}", file.exists())
+
+        val course = AcademyContentLoader.parseAndValidate(file.readText(), sourceLabel = file.path)
+
+        assertEquals("digital-fundamentals", course.id)
+        assertEquals("Digital Drawing Fundamentals", course.title)
+        assertEquals(Instructors.marisol.id, course.instructorId)
+        assertEquals(5, course.lessons.size)
+        assertEquals(
+            listOf(
+                "pressure-sensitivity",
+                "stylus-only-palm-rejection",
+                "working-with-layers",
+                "undo-generously-save-often",
+                "choosing-the-right-brush",
+            ),
+            course.lessons.map { it.id },
+        )
+        course.lessons.forEach { lesson ->
+            assertFalse("lesson '${lesson.id}' should have real content blocks", lesson.blocks.isEmpty())
+            assertEquals(null, lesson.demo)
+        }
+        assertEquals(course, AcademyContentLoader.parseAndValidate(file.readText()))
+    }
+
+    @Test fun `the real migrated watercolor course loads and validates end-to-end`() {
+        val file = File("src/main/assets/academy/watercolor.json")
+        assertTrue("expected bundled asset at ${file.absolutePath}", file.exists())
+
+        val course = AcademyContentLoader.parseAndValidate(file.readText(), sourceLabel = file.path)
+
+        assertEquals("watercolor", course.id)
+        assertEquals("Watercolor Technique", course.title)
+        assertEquals(Instructors.dune.id, course.instructorId)
+        assertEquals(4, course.lessons.size)
+        assertEquals(
+            listOf(
+                "digital-watercolor-behavior",
+                "layering-washes",
+                "soft-vs-defined-edges",
+                "color-mixing-on-page",
+            ),
+            course.lessons.map { it.id },
+        )
+        course.lessons.forEach { lesson ->
+            assertFalse("lesson '${lesson.id}' should have real content blocks", lesson.blocks.isEmpty())
+            assertEquals(null, lesson.demo)
+        }
+        assertEquals(course, AcademyContentLoader.parseAndValidate(file.readText()))
+    }
 }

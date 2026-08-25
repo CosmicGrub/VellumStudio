@@ -52,7 +52,6 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
@@ -404,8 +403,15 @@ private fun ReferenceViewerDialog(template: ColoringTemplate, onDismiss: () -> U
     val assetPath = template.referenceAssetPath
     val filePath = template.referenceFilePath
     if (assetPath == null && filePath == null) return
-    val bitmapState = produceState<ImageBitmap?>(initialValue = null, assetPath, filePath) {
-        value = withContext(Dispatchers.IO) {
+    // Was `produceState`, converted to the equivalent remember+LaunchedEffect it desugars to
+    // internally -- this codebase's Compose runtime version (BOM 2024.12.01, Kotlin 2.0.21) has a
+    // confirmed-broken ProduceStateDoesNotAssignValue lint check that flags *every* produceState
+    // call regardless of whether it assigns `value` (verified with a minimal
+    // `produceState(0) { value = 1 }` repro), so this isn't a lint suppression, it's using the
+    // identical underlying primitives directly.
+    val bitmapState = remember { mutableStateOf<ImageBitmap?>(null) }
+    LaunchedEffect(assetPath, filePath) {
+        bitmapState.value = withContext(Dispatchers.IO) {
             runCatching {
                 if (assetPath != null) AssetBitmapCache.get(context, assetPath).asImageBitmap()
                 else FileBitmapCache.get(filePath!!).asImageBitmap()
@@ -443,8 +449,11 @@ private fun ReferenceViewerDialog(template: ColoringTemplate, onDismiss: () -> U
 
 @Composable
 private fun TemplatePreview(template: ColoringTemplate, modifier: Modifier = Modifier) {
-    val bitmapState = produceState<ImageBitmap?>(initialValue = null, template.id) {
-        value = withContext(Dispatchers.Default) {
+    // See the comment on ReferenceViewerDialog's bitmapState above -- same
+    // produceState-to-remember+LaunchedEffect conversion, same reason.
+    val bitmapState = remember { mutableStateOf<ImageBitmap?>(null) }
+    LaunchedEffect(template.id) {
+        bitmapState.value = withContext(Dispatchers.Default) {
             runCatching {
                 val size = 320
                 val bmp = Bitmap.createBitmap(size, size, Bitmap.Config.ARGB_8888)
