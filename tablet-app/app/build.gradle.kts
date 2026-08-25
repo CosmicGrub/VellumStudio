@@ -16,6 +16,11 @@ android {
         versionCode = 1
         versionName = "0.1.0"
 
+        // First real use of app/src/androidTest -- see PhotoConverterGoldenMasterInstrumentedTest,
+        // the one piece of the PhotoConverter golden-master fixture that needs a live OpenCV
+        // native call chain and so can only run on a real device/emulator, not testDebugUnitTest.
+        testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+
         vectorDrawables {
             useSupportLibrary = true
         }
@@ -117,6 +122,19 @@ android {
             // (false) so any accidental non-Robolectric call into a real android.* method in a
             // *plain* JVM test still fails loudly instead of silently returning 0/false/null.
             isIncludeAndroidResources = false
+        }
+    }
+
+    // The PhotoConverter golden-master fixture photos (see PhotoConverterGoldenMasterFixtureTest /
+    // PhotoConverterGoldenMasterInstrumentedTest) are checked in exactly ONCE, under
+    // src/test/resources/photoconverter-golden/, and shared with androidTest here rather than
+    // duplicated -- androidTest needs them as real assets (to open via a real Context.assets +
+    // BitmapFactory on-device), while the JVM test module reads the identical bytes as a plain
+    // classpath resource. Same source photos tools/masterart_pipeline/source/ already has
+    // checked in for the Python pipeline; reused here rather than re-downloaded.
+    sourceSets {
+        getByName("androidTest") {
+            assets.srcDirs("src/test/resources/photoconverter-golden")
         }
     }
 
@@ -232,4 +250,13 @@ dependencies {
     // stable, non-beta) specifically because it's the first stable line with a published
     // android-all-instrumented artifact for API 36 (this project's compileSdk/targetSdk).
     testImplementation("org.robolectric:robolectric:4.16.1")
+
+    // app/src/androidTest -- currently just PhotoConverterGoldenMasterInstrumentedTest, the one
+    // half of the PhotoConverter golden-master fixture that needs a live OpenCV native call chain
+    // (only available on a real device/emulator, never in a JVM/Robolectric process -- see that
+    // test's own doc). Same versions as the :benchmark module's own androidx.test deps, verified
+    // there against Google's Maven group index on 2026-08-24 -- reused here rather than
+    // re-verified, since they're the same artifacts pinned for the same reason.
+    androidTestImplementation("androidx.test.ext:junit:1.3.0")
+    androidTestImplementation("androidx.test:runner:1.7.0")
 }
