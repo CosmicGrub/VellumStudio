@@ -50,6 +50,18 @@ android {
         jvmTarget = "17"
     }
 
+    testOptions {
+        unitTests {
+            // RegionAnalyzer/ShapeAssist/UndoManager's tests construct real android.graphics
+            // Bitmap/Canvas/PointF/RectF objects via Robolectric rather than the plain
+            // "mockable android.jar" AGP otherwise substitutes (which stubs every method to throw
+            // or return a default) -- isReturnDefaultValues is deliberately left at its default
+            // (false) so any accidental non-Robolectric call into a real android.* method in a
+            // *plain* JVM test still fails loudly instead of silently returning 0/false/null.
+            isIncludeAndroidResources = false
+        }
+    }
+
     buildFeatures {
         compose = true
         buildConfig = true
@@ -141,4 +153,17 @@ dependencies {
 
     debugImplementation("androidx.compose.ui:ui-tooling")
     debugImplementation("androidx.compose.ui:ui-test-manifest")
+
+    // JVM unit test module (app/src/test) -- see that directory for what's covered and why.
+    testImplementation("junit:junit:4.13.2")
+    // RegionAnalyzer takes a real android.graphics.Bitmap (needs actual pixel/Canvas behavior,
+    // not just a non-throwing stub), and ShapeAssist/UndoManager similarly build on real
+    // PointF/RectF/Bitmap/Canvas objects -- none of which the plain "mockable android.jar" AGP
+    // otherwise substitutes for local unit tests can provide. Robolectric runs real android-all
+    // framework bytecode (with pixel-accurate native-graphics-backed Bitmap/Canvas since 4.9+) on
+    // the JVM instead, which is the standard, well-supported way to unit-test this kind of
+    // Android-shaped-but-actually-pure logic without a device/emulator. Pinned to 4.16.1 (latest
+    // stable, non-beta) specifically because it's the first stable line with a published
+    // android-all-instrumented artifact for API 36 (this project's compileSdk/targetSdk).
+    testImplementation("org.robolectric:robolectric:4.16.1")
 }
