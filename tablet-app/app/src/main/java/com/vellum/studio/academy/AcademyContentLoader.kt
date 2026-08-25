@@ -1,6 +1,7 @@
 package com.vellum.studio.academy
 
 import com.vellum.studio.VellumApp
+import com.vellum.studio.canvas.BrushPresets
 import kotlinx.serialization.SerializationException
 import kotlinx.serialization.json.Json
 
@@ -103,6 +104,7 @@ object AcademyContentLoader {
             if (lesson.title.isBlank()) fail("$namedLessonLabel has a blank title")
             if (lesson.summary.isBlank()) fail("$namedLessonLabel has a blank summary")
             if (lesson.blocks.isEmpty()) fail("$namedLessonLabel has no content blocks")
+            lesson.demo?.let { validateDemo(it, namedLessonLabel, ::fail) }
 
             lesson.blocks.forEachIndexed { blockIndex, block ->
                 val blockLabel = "$namedLessonLabel block #$blockIndex"
@@ -209,27 +211,74 @@ object AcademyContentLoader {
             }
             is DiagramOpDto.Path -> {
                 if (op.commands.isEmpty()) fail("$label (path) has no commands")
-                val first = op.commands.first()
-                if (first !is PathCommandDto.MoveTo) fail("$label (path) must start with a moveTo")
-                op.commands.forEachIndexed { i, command ->
-                    val coords = when (command) {
-                        is PathCommandDto.MoveTo -> listOf("x" to command.x, "y" to command.y)
-                        is PathCommandDto.LineTo -> listOf("x" to command.x, "y" to command.y)
-                        is PathCommandDto.QuadTo -> listOf(
-                            "controlX" to command.controlX, "controlY" to command.controlY,
-                            "x" to command.x, "y" to command.y,
-                        )
-                        is PathCommandDto.CubicTo -> listOf(
-                            "control1X" to command.control1X, "control1Y" to command.control1Y,
-                            "control2X" to command.control2X, "control2Y" to command.control2Y,
-                            "x" to command.x, "y" to command.y,
-                        )
-                    }
-                    coords.forEach { (fieldName, value) -> requireUnitRange(value, "command #$i $fieldName") }
-                }
+                if (op.commands.first() !is PathCommandDto.MoveTo) fail("$label (path) must start with a moveTo")
+                requirePathCommandsInUnitRange(op.commands, label, fail)
                 requireFillOrStroke(op.fillColor, op.strokeColor, op.strokeWidth)
                 requireValidAlpha(op.alpha)
                 requireValidDash(op.dash)
+            }
+        }
+    }
+
+    /**
+     * Shared 0..1 coordinate-range check for every value in a moveTo/lineTo/quadTo/cubicTo command
+     * list -- used by both [DiagramOpDto.Path] (above) and [DemoStrokeDto] (below), which express
+     * path geometry with the exact same [PathCommandDto] vocabulary. Message shape mirrors
+     * [validateDiagramOp]'s own `requireUnitRange` exactly ("$label has command #$i $fieldName
+     * $value outside the normalized 0..1 range").
+     */
+    private fun requirePathCommandsInUnitRange(commands: List<PathCommandDto>, label: String, fail: (String) -> Nothing) {
+        commands.forEachIndexed { i, command ->
+            val coords = when (command) {
+                is PathCommandDto.MoveTo -> listOf("x" to command.x, "y" to command.y)
+                is PathCommandDto.LineTo -> listOf("x" to command.x, "y" to command.y)
+                is PathCommandDto.QuadTo -> listOf(
+                    "controlX" to command.controlX, "controlY" to command.controlY,
+                    "x" to command.x, "y" to command.y,
+                )
+                is PathCommandDto.CubicTo -> listOf(
+                    "control1X" to command.control1X, "control1Y" to command.control1Y,
+                    "control2X" to command.control2X, "control2Y" to command.control2Y,
+                    "x" to command.x, "y" to command.y,
+                )
+            }
+            coords.forEach { (fieldName, value) ->
+                if (value < 0f || value > 1f) fail("$label has command #$i $fieldName $value outside the normalized 0..1 range")
+            }
+        }
+    }
+
+    /**
+     * Applies the same "fail loudly" discipline to an optional [Lesson.demo]: non-empty stages,
+     * each with a non-blank caption and at least one stroke, and every stroke referencing a real
+     * [com.vellum.studio.canvas.BrushPresets] id (rather than silently falling back to Pencil the
+     * way [com.vellum.studio.canvas.BrushPresets.byId] itself does), a valid hex color, a positive
+     * sizeMultiplier, and a well-formed path starting with a moveTo -- all pure-Kotlin checks, same
+     * as everything else in this function, so a course without a demo never needs Robolectric to
+     * validate (see [DemoSpecBuilder]'s own doc for why the *conversion* step, unlike this
+     * validation step, does).
+     */
+    private fun validateDemo(demo: DemoSpecDto, lessonLabel: String, fail: (String) -> Nothing) {
+        if (demo.stages.isEmpty()) fail("$lessonLabel demo has no stages")
+        demo.stages.forEachIndexed { stageIndex, stage ->
+            val stageLabel = "$lessonLabel demo stage #$stageIndex"
+            if (stage.caption.isBlank()) fail("$stageLabel has a blank caption")
+            if (stage.strokes.isEmpty()) fail("$stageLabel has no strokes")
+            stage.strokes.forEachIndexed { strokeIndex, stroke ->
+                val strokeLabel = "$stageLabel stroke #$strokeIndex"
+                if (BrushPresets.all.none { it.id == stroke.brushId }) {
+                    val known = BrushPresets.all.joinToString(", ") { it.id }
+                    fail("$strokeLabel references unknown brushId '${stroke.brushId}' (known brushes: $known)")
+                }
+                if (!HEX_COLOR_REGEX.matches(stroke.color)) {
+                    fail("$strokeLabel has an invalid color '${stroke.color}' (expected a '#RRGGBB' hex color)")
+                }
+                if (stroke.sizeMultiplier <= 0f) {
+                    fail("$strokeLabel has a non-positive sizeMultiplier (${stroke.sizeMultiplier})")
+                }
+                if (stroke.path.isEmpty()) fail("$strokeLabel has no path commands")
+                if (stroke.path.first() !is PathCommandDto.MoveTo) fail("$strokeLabel path must start with a moveTo")
+                requirePathCommandsInUnitRange(stroke.path, strokeLabel, fail)
             }
         }
     }
@@ -247,6 +296,7 @@ object AcademyContentLoader {
         title = title,
         summary = summary,
         blocks = blocks.map { it.toLessonBlock() },
+        demo = demo?.let { DemoSpecBuilder.build(it) },
     )
 
     private fun LessonBlockDto.toLessonBlock(): LessonBlock = when (this) {

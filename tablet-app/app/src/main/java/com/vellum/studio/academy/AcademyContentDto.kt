@@ -12,14 +12,16 @@ import kotlinx.serialization.Serializable
  * CourseDetailScreen, LessonScreen, AcademyProgressRepository, DemoPlayer) needs to know or care
  * whether a given course came from a JSON file or a Kotlin object literal.
  *
- * Still narrower than the full [LessonBlock] sealed hierarchy: [LessonDemo] (real
- * [android.graphics.Path] data fed through the app's actual brush-rendering pipeline -- see
- * DemoPlayer) is genuine CODE, not authorable content, so there's no JSON shape for it here. A
- * course with a flagship playback demo stays a hand-authored `CourseXxx.kt` object for that lesson,
- * same as today. [LessonBlock.Diagram] itself, in contrast, is just a `(Canvas, Int) -> Unit`
- * closure wrapping a small, fixed vocabulary of drawing primitives (line/circle/rect/text/path --
- * see [DiagramOpDto]) -- genuinely authorable declarative data, not code, once that vocabulary is
- * captured as JSON, which is exactly what [LessonBlockDto.Diagram] plus [DiagramRenderer] do.
+ * As of schema version 1's [LessonContentDto.demo] field, this format also covers [LessonDemo]
+ * (real [android.graphics.Path] data fed through the app's actual brush-rendering pipeline -- see
+ * DemoPlayer): a demo is a small, fixed vocabulary too (a list of stages, each a caption plus
+ * strokes, each stroke a brushId/color/sizeMultiplier plus a path built from the same
+ * moveTo/lineTo/quadTo/cubicTo [PathCommandDto] vocabulary [LessonBlockDto.Diagram] already uses)
+ * -- see [DemoSpecDto] for the shape and [DemoSpecBuilder] for how it becomes a real [LessonDemo].
+ * Unlike [LessonBlockDto.Diagram] (a lazy `(Canvas, Int) -> Unit` closure), [LessonDemo] is eager,
+ * already-real [android.graphics.Path] data, so [DemoSpecBuilder] -- unlike [DiagramRenderer] --
+ * genuinely needs Android graphics the moment it runs; see that object's own doc for what that
+ * means for testing.
  *
 
  * [schemaVersion] exists from day one, the same reasoning as [ProjectMeta.schemaVersion] in
@@ -46,6 +48,8 @@ data class LessonContentDto(
     val title: String,
     val summary: String,
     val blocks: List<LessonBlockDto> = emptyList(),
+    /** See [DemoSpecDto] for the shape and [DemoSpecBuilder] for how it becomes a real [LessonDemo]. */
+    val demo: DemoSpecDto? = null,
 )
 
 /**

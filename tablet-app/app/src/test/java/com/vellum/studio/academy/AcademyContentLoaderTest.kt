@@ -1,5 +1,6 @@
 package com.vellum.studio.academy
 
+import com.vellum.studio.canvas.BrushPresets
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -253,6 +254,96 @@ class AcademyContentLoaderTest {
         val badAlign =
             """{"type": "text", "x": 0.5, "y": 0.5, "text": "hi", "color": "#000000", "textSize": 0.05, "align": "middle"}"""
         assertThrowsAcademyContentException { AcademyContentLoader.parseAndValidate(courseWithDiagramOps(badAlign)) }
+    }
+
+    // --- Demo blocks: reject-path only here -- see DemoSpecBuilderTest for the happy path/end-to-end
+    // proof, which needs Robolectric because building a real LessonDemo means building a real
+    // android.graphics.Path/Color the moment it runs (see DemoSpecBuilder's own doc). Every case
+    // below is rejected by AcademyContentLoader.validate() BEFORE that conversion ever happens, so
+    // these stay plain JVM tests, same as every other rejection test in this file. ------------------
+
+    private val validDemoPath =
+        """[{"type": "moveTo", "x": 0.1, "y": 0.1}, {"type": "lineTo", "x": 0.9, "y": 0.9}]"""
+
+    private fun demoStrokeJson(
+        pathJson: String = validDemoPath,
+        brushId: String = "watercolor",
+        color: String = "#FF0000",
+        sizeMultiplier: String = "2.0",
+    ) = """{"path": $pathJson, "brushId": "$brushId", "color": "$color", "sizeMultiplier": $sizeMultiplier}"""
+
+    private fun demoJsonWithStroke(strokeJson: String = demoStrokeJson(), caption: String = "Stage one") =
+        """{"stages": [{"caption": "$caption", "strokes": [$strokeJson]}]}"""
+
+    private fun courseWithDemo(demoJson: String) = """
+        {
+          "schemaVersion": 1,
+          "id": "test-course",
+          "title": "Test Course",
+          "description": "A course for testing.",
+          "instructorId": "rowan",
+          "lessons": [
+            {
+              "id": "lesson-one",
+              "title": "Lesson One",
+              "summary": "The first lesson.",
+              "blocks": [{"type": "paragraph", "text": "A paragraph."}],
+              "demo": $demoJson
+            }
+          ]
+        }
+    """.trimIndent()
+
+    @Test fun `a demo with no stages is rejected`() {
+        val e = assertThrowsAcademyContentException {
+            AcademyContentLoader.parseAndValidate(courseWithDemo("""{"stages": []}"""))
+        }
+        assertTrue(e.message.orEmpty().contains("no stages"))
+    }
+
+    @Test fun `a demo stage with no strokes is rejected`() {
+        val json = courseWithDemo("""{"stages": [{"caption": "Stage one", "strokes": []}]}""")
+        assertThrowsAcademyContentException { AcademyContentLoader.parseAndValidate(json) }
+    }
+
+    @Test fun `a demo stage with a blank caption is rejected`() {
+        val json = courseWithDemo(demoJsonWithStroke(caption = "   "))
+        assertThrowsAcademyContentException { AcademyContentLoader.parseAndValidate(json) }
+    }
+
+    @Test fun `a demo stroke with an unknown brushId is rejected and lists known brush ids`() {
+        val json = courseWithDemo(demoJsonWithStroke(demoStrokeJson(brushId = "bogus_brush")))
+        val e = assertThrowsAcademyContentException { AcademyContentLoader.parseAndValidate(json) }
+        assertTrue(e.message.orEmpty().contains("bogus_brush"))
+        BrushPresets.all.forEach { assertTrue(e.message.orEmpty().contains(it.id)) }
+    }
+
+    @Test fun `a demo stroke with an invalid hex color is rejected`() {
+        val json = courseWithDemo(demoJsonWithStroke(demoStrokeJson(color = "red")))
+        val e = assertThrowsAcademyContentException { AcademyContentLoader.parseAndValidate(json) }
+        assertTrue(e.message.orEmpty().contains("hex", ignoreCase = true))
+    }
+
+    @Test fun `a demo stroke with a non-positive sizeMultiplier is rejected`() {
+        val json = courseWithDemo(demoJsonWithStroke(demoStrokeJson(sizeMultiplier = "0")))
+        assertThrowsAcademyContentException { AcademyContentLoader.parseAndValidate(json) }
+    }
+
+    @Test fun `a demo stroke path with no commands is rejected`() {
+        val json = courseWithDemo(demoJsonWithStroke(demoStrokeJson(pathJson = "[]")))
+        assertThrowsAcademyContentException { AcademyContentLoader.parseAndValidate(json) }
+    }
+
+    @Test fun `a demo stroke path that doesn't start with moveTo is rejected`() {
+        val badPath = """[{"type": "lineTo", "x": 0.5, "y": 0.5}]"""
+        val json = courseWithDemo(demoJsonWithStroke(demoStrokeJson(pathJson = badPath)))
+        assertThrowsAcademyContentException { AcademyContentLoader.parseAndValidate(json) }
+    }
+
+    @Test fun `a demo stroke path coordinate outside 0 to 1 is rejected`() {
+        val badPath = """[{"type": "moveTo", "x": 1.5, "y": 0.1}, {"type": "lineTo", "x": 0.9, "y": 0.9}]"""
+        val json = courseWithDemo(demoJsonWithStroke(demoStrokeJson(pathJson = badPath)))
+        assertThrowsAcademyContentException { AcademyContentLoader.parseAndValidate(json) }
     }
 
     // --- End-to-end proof: the real, checked-in, migrated course actually works -------------------
