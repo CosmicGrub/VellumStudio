@@ -89,3 +89,64 @@ this device:
   for the physical-rotation reason above -- only its single-column fallback path (`HALF_OPENED_OTHER`)
   was. Re-verify visually if this device is ever physically propped up in landscape with a future
   test pass.
+
+## Merge: `main` -> `device/galaxy-z-fold5` (2026-08-25, "The Conservation Lab")
+
+Merged origin/main (through commit 1c93324 -- JVM test module, durable diagnostic log, project
+schema versioning/migration, Android CI + release minification, Macrobenchmark tooling, Academy
+content-as-data + PhotoConverter golden-master fixture) into this branch. Three real conflicts,
+all in files this branch had already restructured for the fold-aware layout:
+
+1. **`ui/gallery/GalleryScreen.kt`** -- both sides touched the FAB: this branch made it
+   compact-width-conditional (Quick Sketch vs. New Canvas), main added a TalkBack
+   `contentDescription` fix for the FAB's icon+text not merging into an accessible label.
+   Resolved by keeping this branch's conditional and applying main's accessibility fix to
+   *both* FAB variants, not just the one main happened to touch -- both are the same
+   `ExtendedFloatingActionButton` shape with the same underlying gap.
+2. **`ui/settings/SettingsScreen.kt`** -- both sides independently fixed the exact same
+   pre-existing "Column has no vertical scroll" bug (this branch while narrowing the screen for
+   the cover display; main while adding the Diagnostics card), just with the `.padding()` /
+   `.verticalScroll()` modifier order swapped. Kept main's order (scroll wraps the Column, padding
+   applied inside it, so the gutter is part of the scrollable extent) since it's the more correct
+   Compose idiom; functionally both fixed the same gap.
+3. **`ui/editor/EditorScreen.kt`** -- looked like a large conflict but was a diff-alignment
+   artifact: main's only real change here (since this branch's last sync) was one line,
+   `contentDescription = "Drawing canvas"`, added to the `DrawingCanvasView.apply {}` block for
+   the same TalkBack-gap reason as above. This branch had since extracted that exact block into
+   the shared `CanvasSurface` composable (used by both `EditorScreen`'s tabletop-split path and
+   `QuickSketchScreen`), so the merge tried to reconcile main's pre-extraction snapshot against
+   this branch's post-extraction call site. Resolved by discarding main's raw
+   pre-extraction block entirely (verified byte-identical to this branch's pre-merge HEAD once
+   the markers were removed) and hand-porting the one real line -- `contentDescription =
+   "Drawing canvas"` plus its explanatory comment -- into `CanvasSurface`'s own
+   `DrawingCanvasView.apply {}`, so the fix now applies in every posture that reuses this shared
+   composable, not just the single call site main originally touched.
+
+All other files auto-merged cleanly, including `app/build.gradle.kts` (main's new test/benchmark
+dependencies and this branch's `androidx.window` dependency both landed correctly) and
+`AndroidManifest.xml` (main's new `FileProvider` for diagnostic-log export alongside this
+branch's existing `faketouch`/banner entries).
+
+**Verification performed:** `:app:testDebugUnitTest` run fresh (`--rerun-tasks`): 64/64 tests
+pass, 0 failures, across the same 10 test classes as `main`. `:app:assembleDebug` and
+`:app:assembleRelease` both `BUILD SUCCESSFUL` (release exercises R8 minification with the
+existing ProGuard rules, zero new failures). Debug APK installed cleanly on RFCW80CK2RW
+(`adb install -r -d`, after `am force-stop`). Launch was attempted and logcat was scanned for
+`AndroidRuntime`/`FATAL EXCEPTION` across the launch window: the process started, drew its first
+frame (`ActivityTaskManager: Displayed ... +948ms`), and is alive with no crash of any kind.
+
+**Known limitation, this pass could not resolve:** RFCW80CK2RW was behind a secure lock screen
+(PIN/pattern/biometric -- confirmed via `locksettings get-disabled`=false and
+`dumpsys trust` showing `deviceLocked=1`) for this entire session, including after multiple
+legitimate wake attempts (`KEYCODE_WAKEUP`, plus a swipe-up to dismiss the ambient-display/dream
+layer, which only revealed the actual lock screen underneath). Per this project's hard rule
+against ever bypassing a secure lock screen, no PIN/pattern/biometric entry was attempted. This
+means the on-device visual regression pass the task called for -- an existing real project
+reopening correctly, the Settings > Diagnostics and Pressure Curve cards rendering, the migrated
+Academy course rendering (including its tabletop flex-mode layout), and a walkthrough across
+cover/open/forced-tabletop postures -- could **not** be visually confirmed this session, only
+code-reviewed at the merge-conflict level (above) and confirmed non-crashing via logcat. This is
+a device-access limitation, not a code defect: the build, tests, and install all succeeded, and
+the one thing observed on-device (the app launching and drawing its first frame before the
+keyguard stopped it) showed no crash. Re-run the visual posture walkthrough once the device is
+physically unlocked.

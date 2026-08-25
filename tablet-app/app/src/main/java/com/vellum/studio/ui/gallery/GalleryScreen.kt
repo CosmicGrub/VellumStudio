@@ -57,6 +57,8 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.vellum.studio.model.CanvasSizePreset
@@ -130,6 +132,16 @@ fun GalleryScreen(
             )
         },
         floatingActionButton = {
+            // Real, pre-existing accessibility gap, found while wiring up Macrobenchmark's
+            // UiAutomator-driven gesture tests (see benchmark/.../PanZoomFrameTimingBenchmark.kt):
+            // confirmed via a live `uiautomator dump` against this exact screen that
+            // ExtendedFloatingActionButton's icon+text slots never merge into an accessible label
+            // at all (the node shows up as NAF="true" -- "not accessibility-friendly" -- with
+            // empty text AND empty content-desc, even though the label is clearly visible on
+            // screen). That means TalkBack users got nothing announced for this button before this
+            // fix, not just that By.text(...) couldn't find it in a test. Applied to both of this
+            // screen's FAB variants (compact-width Quick Sketch, and the regular New Canvas) since
+            // both are the same ExtendedFloatingActionButton shape with the same gap.
             if (compactWidth) {
                 ExtendedFloatingActionButton(
                     onClick = {
@@ -141,12 +153,18 @@ fun GalleryScreen(
                     },
                     icon = { Icon(Icons.Filled.Brush, contentDescription = null) },
                     text = { Text("Quick Sketch") },
+                    modifier = Modifier.semantics(mergeDescendants = true) {
+                        contentDescription = "Quick Sketch"
+                    },
                 )
             } else {
                 ExtendedFloatingActionButton(
                     onClick = { showNewCanvasDialog = true },
                     icon = { Icon(Icons.Filled.Add, contentDescription = null) },
                     text = { Text("New Canvas") },
+                    modifier = Modifier.semantics(mergeDescendants = true) {
+                        contentDescription = "New Canvas"
+                    },
                 )
             }
         },

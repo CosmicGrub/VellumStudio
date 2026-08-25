@@ -739,6 +739,17 @@ internal fun CanvasSurface(
             modifier = Modifier.fillMaxSize(),
             factory = { ctx ->
                 DrawingCanvasView(ctx).apply {
+                    // Real, pre-existing accessibility gap, fixed on `main` (commit 1c93324's
+                    // predecessor) while this branch's own CanvasSurface extraction was in
+                    // flight: this plain custom View had zero contentDescription before, so
+                    // TalkBack had nothing to announce for the single largest interactive element
+                    // on screen -- true for every posture this shared composable renders in
+                    // (FLAT and HALF_OPENED_TABLETOP alike). Doubles as this project's hook for
+                    // on-device UiAutomator-driven gesture tests (see
+                    // benchmark/src/main/java/.../PanZoomFrameTimingBenchmark.kt) to locate this
+                    // exact View via By.desc(...) rather than a brittle fully-qualified-class-name
+                    // match.
+                    contentDescription = "Drawing canvas"
                     attachEngine(engine)
                     setOnDragListener(referenceImageDragListener)
                     this.onStrokeCommitted = { onStrokeCommitted() }
