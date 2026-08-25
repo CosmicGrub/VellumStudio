@@ -1,14 +1,20 @@
 package com.vellum.studio.ui.settings
 
+import android.content.Intent
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowBack
+import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.IosShare
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -16,6 +22,7 @@ import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Slider
 import androidx.compose.material3.Switch
@@ -23,13 +30,21 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.core.content.FileProvider
 import com.vellum.studio.BuildConfig
 import com.vellum.studio.canvas.PressureCurvePreset
 import com.vellum.studio.canvas.PressureCurveRange
 import com.vellum.studio.model.SettingsRepository
+import com.vellum.studio.util.DiagnosticLog
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -43,7 +58,16 @@ fun SettingsScreen(settingsRepository: SettingsRepository, onBack: () -> Unit) {
         },
     ) { padding ->
         Column(
-            Modifier.fillMaxSize().padding(padding).padding(24.dp),
+            Modifier
+                .fillMaxSize()
+                .padding(padding)
+                .padding(24.dp)
+                // Pre-existing gap: this Column had no scroll at all, so cards below "Pressure
+                // curve" (including "Experimental", predating this task) were already clipped
+                // off-screen on a portrait tablet layout -- not just the new "Diagnostics" card
+                // added here. Fixing it is in scope: without it, Diagnostics would be unreachable
+                // in the very UI this task asks for.
+                .verticalScroll(rememberScrollState()),
             verticalArrangement = Arrangement.spacedBy(16.dp),
         ) {
             SettingsCard(title = "About") {
@@ -180,8 +204,97 @@ fun SettingsScreen(settingsRepository: SettingsRepository, onBack: () -> Unit) {
                     )
                 }
             }
+            SettingsCard(title = "Diagnostics") {
+                val context = LocalContext.current
+                // Bumped after Clear so the size/preview below re-read the file instead of showing
+                // stale state from before the button press -- DiagnosticLog itself isn't
+                // Compose-observable (it's a plain file, written from background threads all over
+                // the app), so this screen has to explicitly ask it to refresh.
+                var refreshTick by remember { mutableIntStateOf(0) }
+                val sizeBytes = remember(refreshTick) { DiagnosticLog.sizeBytes(context) }
+                val lastLines = remember(refreshTick) { DiagnosticLog.lastLines(context) }
+
+                Text(
+                    "An on-device log of key app events (start, project open/save, photo conversion, pose " +
+                        "detection) and any crash — kept only on this device, never sent anywhere. Capped at a " +
+                        "few hundred KB; the oldest entries drop off automatically once it fills up.",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                Text(
+                    "Current size: ${formatLogSize(sizeBytes)}",
+                    style = MaterialTheme.typography.bodySmall,
+                    modifier = Modifier.padding(top = 10.dp),
+                )
+                if (lastLines.isEmpty()) {
+                    Text(
+                        "No entries yet.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(top = 4.dp),
+                    )
+                } else {
+                    Column(
+                        Modifier
+                            .fillMaxWidth()
+                            .padding(top = 4.dp)
+                            .background(MaterialTheme.colorScheme.surfaceVariant, RoundedCornerShape(8.dp))
+                            .padding(10.dp),
+                    ) {
+                        lastLines.forEach { line ->
+                            Text(
+                                line,
+                                style = MaterialTheme.typography.labelSmall,
+                                fontFamily = FontFamily.Monospace,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                            )
+                        }
+                    }
+                }
+                Row(
+                    Modifier.fillMaxWidth().padding(top = 12.dp),
+                    horizontalArrangement = Arrangement.spacedBy(12.dp),
+                ) {
+                    OutlinedButton(
+                        onClick = {
+                            val file = DiagnosticLog.file(context)
+                            if (file.exists() && file.length() > 0) {
+                                val uri = FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", file)
+                                val sendIntent = Intent(Intent.ACTION_SEND).apply {
+                                    type = "text/plain"
+                                    putExtra(Intent.EXTRA_STREAM, uri)
+                                    putExtra(Intent.EXTRA_SUBJECT, "Vellum Studio diagnostic log")
+                                    addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                                }
+                                context.startActivity(Intent.createChooser(sendIntent, "Export diagnostic log"))
+                            }
+                        },
+                        enabled = sizeBytes > 0,
+                    ) {
+                        Icon(Icons.Filled.IosShare, contentDescription = null, modifier = Modifier.padding(end = 8.dp))
+                        Text("Export")
+                    }
+                    OutlinedButton(
+                        onClick = {
+                            DiagnosticLog.clear(context)
+                            refreshTick++
+                        },
+                        enabled = sizeBytes > 0,
+                    ) {
+                        Icon(Icons.Filled.Delete, contentDescription = null, modifier = Modifier.padding(end = 8.dp))
+                        Text("Clear")
+                    }
+                }
+            }
         }
     }
+}
+
+private fun formatLogSize(bytes: Long): String = if (bytes < 1024) {
+    "$bytes B"
+} else {
+    String.format("%.1f KB", bytes / 1024.0)
 }
 
 @Composable

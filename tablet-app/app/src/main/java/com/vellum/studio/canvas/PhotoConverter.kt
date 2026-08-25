@@ -1,6 +1,9 @@
 package com.vellum.studio.canvas
 
 import android.graphics.Bitmap
+import com.vellum.studio.VellumApp
+import com.vellum.studio.util.DiagnosticLog
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import org.opencv.android.OpenCVLoader
@@ -154,18 +157,36 @@ object PhotoConverter {
      */
     suspend fun convert(source: Bitmap, preset: Preset): PhotoConversionResult =
         withContext(Dispatchers.Default) {
-            ensureOpenCvLoaded()
-
-            val reference = makeReference(source)
-            val lineArt = makeLineArt(source, preset)
-
-            val regionMap = RegionAnalyzer.analyze(lineArt)
-            PhotoConversionResult(
-                reference = reference,
-                lineArt = lineArt,
-                isPaintByNumberEligible = eligibleForPaintByNumber(regionMap.regions.size),
-                regionCount = regionMap.regions.size,
+            DiagnosticLog.log(
+                VellumApp.instance, "PhotoConverter",
+                "Photo conversion started (preset=${preset.label}, ${source.width}x${source.height})",
             )
+            try {
+                ensureOpenCvLoaded()
+
+                val reference = makeReference(source)
+                val lineArt = makeLineArt(source, preset)
+
+                val regionMap = RegionAnalyzer.analyze(lineArt)
+                val result = PhotoConversionResult(
+                    reference = reference,
+                    lineArt = lineArt,
+                    isPaintByNumberEligible = eligibleForPaintByNumber(regionMap.regions.size),
+                    regionCount = regionMap.regions.size,
+                )
+                DiagnosticLog.log(
+                    VellumApp.instance, "PhotoConverter",
+                    "Photo conversion finished (regions=${result.regionCount}, paintByNumberEligible=${result.isPaintByNumberEligible})",
+                )
+                result
+            } catch (c: CancellationException) {
+                // Normal coroutine cancellation (e.g. the caller navigated away mid-conversion),
+                // not a real failure -- must still propagate, just not logged as one.
+                throw c
+            } catch (t: Throwable) {
+                DiagnosticLog.log(VellumApp.instance, "PhotoConverter", "Photo conversion failed: ${t::class.java.simpleName}: ${t.message}")
+                throw t
+            }
         }
 
     /** Plain resize (no OpenCV needed for this half) -- mirrors make_reference()'s long-edge downscale. */

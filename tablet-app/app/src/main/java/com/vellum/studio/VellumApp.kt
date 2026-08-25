@@ -7,6 +7,7 @@ import com.vellum.studio.model.PaletteRepository
 import com.vellum.studio.model.ProjectRepository
 import com.vellum.studio.model.SettingsRepository
 import com.vellum.studio.model.UserPhotoTemplateRepository
+import com.vellum.studio.util.DiagnosticLog
 
 class VellumApp : Application() {
     val repository: ProjectRepository by lazy { ProjectRepository(this) }
@@ -19,6 +20,11 @@ class VellumApp : Application() {
     override fun onCreate() {
         super.onCreate()
         instance = this
+        // Installed before anything else so a crash during the rest of this method's own
+        // initialization (repositories are lazy, but a bad first touch of one would still land
+        // here) is captured too.
+        DiagnosticLog.install(this)
+        DiagnosticLog.log(this, "Lifecycle", "App started (${DiagnosticLog.deviceBanner()})")
     }
 
     companion object {
