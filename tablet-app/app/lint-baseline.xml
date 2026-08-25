@@ -84,7 +84,7 @@
         errorLine2="                   ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~">
         <location
             file="build.gradle.kts"
-            line="129"
+            line="174"
             column="20"/>
     </issue>
 
@@ -95,7 +95,7 @@
         errorLine2="                   ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~">
         <location
             file="build.gradle.kts"
-            line="130"
+            line="175"
             column="20"/>
     </issue>
 
@@ -106,7 +106,7 @@
         errorLine2="                   ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~">
         <location
             file="build.gradle.kts"
-            line="131"
+            line="176"
             column="20"/>
     </issue>
 
@@ -117,7 +117,7 @@
         errorLine2="                   ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~">
         <location
             file="build.gradle.kts"
-            line="132"
+            line="177"
             column="20"/>
     </issue>
 
@@ -128,7 +128,7 @@
         errorLine2="                   ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~">
         <location
             file="build.gradle.kts"
-            line="133"
+            line="178"
             column="20"/>
     </issue>
 
@@ -139,7 +139,7 @@
         errorLine2="                   ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~">
         <location
             file="build.gradle.kts"
-            line="142"
+            line="187"
             column="20"/>
     </issue>
 
@@ -150,7 +150,7 @@
         errorLine2="                   ~~~~~~~~~~~~~~~~~~~~~~~~~~~~">
         <location
             file="build.gradle.kts"
-            line="148"
+            line="193"
             column="20"/>
     </issue>
 
@@ -161,7 +161,7 @@
         errorLine2="                   ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~">
         <location
             file="build.gradle.kts"
-            line="150"
+            line="195"
             column="20"/>
     </issue>
 
@@ -172,7 +172,7 @@
         errorLine2="                   ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~">
         <location
             file="build.gradle.kts"
-            line="151"
+            line="196"
             column="20"/>
     </issue>
 
@@ -183,74 +183,8 @@
         errorLine2="                   ~~~~~~~~~~~~~~~~~~~~~~~~~~">
         <location
             file="build.gradle.kts"
-            line="166"
+            line="211"
             column="20"/>
-    </issue>
-
-    <issue
-        id="ProduceStateDoesNotAssignValue"
-        message="produceState calls should assign `value` inside the producer lambda"
-        errorLine1="    val bitmapState = produceState&lt;ImageBitmap?>(initialValue = null, assetPath, filePath) {"
-        errorLine2="                      ~~~~~~~~~~~~">
-        <location
-            file="src/main/java/com/vellum/studio/ui/coloringbook/ColoringBookScreen.kt"
-            line="407"
-            column="23"/>
-    </issue>
-
-    <issue
-        id="ProduceStateDoesNotAssignValue"
-        message="produceState calls should assign `value` inside the producer lambda"
-        errorLine1="    val bitmapState = produceState&lt;ImageBitmap?>(initialValue = null, template.id) {"
-        errorLine2="                      ~~~~~~~~~~~~">
-        <location
-            file="src/main/java/com/vellum/studio/ui/coloringbook/ColoringBookScreen.kt"
-            line="446"
-            column="23"/>
-    </issue>
-
-    <issue
-        id="ProduceStateDoesNotAssignValue"
-        message="produceState calls should assign `value` inside the producer lambda"
-        errorLine1="    val bitmapState = produceState&lt;androidx.compose.ui.graphics.ImageBitmap?>(initialValue = null, file.path, file.lastModified()) {"
-        errorLine2="                      ~~~~~~~~~~~~">
-        <location
-            file="src/main/java/com/vellum/studio/ui/gallery/GalleryScreen.kt"
-            line="220"
-            column="23"/>
-    </issue>
-
-    <issue
-        id="ProduceStateDoesNotAssignValue"
-        message="produceState calls should assign `value` inside the producer lambda"
-        errorLine1="    val bitmapState = produceState&lt;androidx.compose.ui.graphics.ImageBitmap?>(initialValue = null, layer.id, layer.contentVersion) {"
-        errorLine2="                      ~~~~~~~~~~~~">
-        <location
-            file="src/main/java/com/vellum/studio/ui/editor/LayersPanel.kt"
-            line="267"
-            column="23"/>
-    </issue>
-
-    <issue
-        id="ProduceStateDoesNotAssignValue"
-        message="produceState calls should assign `value` inside the producer lambda"
-        errorLine1="        val bitmapState = produceState&lt;ImageBitmap?>(initialValue = null, reference) {"
-        errorLine2="                          ~~~~~~~~~~~~">
-        <location
-            file="src/main/java/com/vellum/studio/ui/academy/LessonScreen.kt"
-            line="190"
-            column="27"/>
-    </issue>
-
-    <issue
-        id="ProduceStateDoesNotAssignValue"
-        message="produceState calls should assign `value` inside the producer lambda"
-        errorLine1="        val bitmapState = produceState&lt;ImageBitmap?>(initialValue = null, diagram) {"
-        errorLine2="                          ~~~~~~~~~~~~">
-        <location
-            file="src/main/java/com/vellum/studio/ui/academy/LessonScreen.kt"
-            line="227"
-            column="27"/>
     </issue>
 
     <issue
@@ -260,7 +194,7 @@
         errorLine2="                          ~~~~~~~~~~~">
         <location
             file="build.gradle.kts"
-            line="30"
+            line="35"
             column="27"/>
     </issue>
 
@@ -355,7 +289,7 @@
         errorLine2="                               ~~~~~~~~~~~~~~">
         <location
             file="src/main/java/com/vellum/studio/ui/gallery/GalleryScreen.kt"
-            line="84"
+            line="85"
             column="32"/>
     </issue>
 
@@ -377,7 +311,7 @@
         errorLine2="                                 ~~~~~~~~~~~~~~">
         <location
             file="src/main/java/com/vellum/studio/ui/academy/LessonScreen.kt"
-            line="271"
+            line="280"
             column="34"/>
     </issue>
 
