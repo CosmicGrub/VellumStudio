@@ -53,6 +53,33 @@ android {
         debug {
             isDebuggable = true
         }
+        // For Macrobenchmark (see the ":benchmark" module) -- built on release (same signing,
+        // same manifest/resources/packaging) but with minification deliberately turned back OFF,
+        // i.e. Google's documented "nonMinifiedRelease" pattern (the exact name/output-path
+        // convention their own Baseline Profile tooling uses for this same build-type shape) rather
+        // than a straight initWith(release) copy. This isn't a shortcut -- it's the correct choice,
+        // discovered by actually hitting the alternative's real failure: a plain initWith(release)
+        // copy (release's isMinifyEnabled=true carried through as-is) makes AGP's own
+        // :benchmark:checkTestedAppObfuscationBenchmark task demand the ":benchmark" test module
+        // *also* be minified to match, which in turn sends R8 into shrinking androidx.test's/
+        // benchmark-macro's own large, reflection-heavy dependency graph and failing on missing
+        // optional transitive classes (androidx.arch.core, com.google.errorprone annotations, etc.)
+        // that would need their own hand-written keep/dontwarn rules to fix -- entirely to shrink a
+        // test harness APK whose own size/obfuscation has zero bearing on the accuracy of any
+        // metric actually being measured (only the TARGET app's realism matters for that). Losing
+        // R8 minification here does mean this build type doesn't reflect release's exact dex
+        // layout/size, but isDebuggable stays false (still real ART JIT/AOT behavior, still
+        // profileable, still not the de-optimized debug path) -- the one thing minification would
+        // have added on top is dex-verification/class-loading overhead from a larger unshrunk dex,
+        // which is a real but secondary difference call out explicitly in benchmark-baseline.md
+        // rather than hidden.
+        create("benchmark") {
+            initWith(getByName("release"))
+            matchingFallbacks += listOf("release")
+            isDebuggable = false
+            isMinifyEnabled = false
+            isShrinkResources = false
+        }
     }
 
     compileOptions {
@@ -184,6 +211,14 @@ dependencies {
 
     debugImplementation("androidx.compose.ui:ui-tooling")
     debugImplementation("androidx.compose.ui:ui-test-manifest")
+
+    // Required by the "benchmark" build type / the ":benchmark" Macrobenchmark module: writes the
+    // ahead-of-time compiler profile installed alongside the app so CompilationMode.DEFAULT has
+    // something real to reflect (and is a prerequisite for ever shipping a checked-in Baseline
+    // Profile later, though this project doesn't have one yet). Verified current stable release
+    // directly against Google's Maven group index (dl.google.com/dl/android/maven2/androidx/
+    // profileinstaller/profileinstaller/maven-metadata.xml) on 2026-08-24: latest stable is 1.4.1.
+    implementation("androidx.profileinstaller:profileinstaller:1.4.1")
 
     // JVM unit test module (app/src/test) -- see that directory for what's covered and why.
     testImplementation("junit:junit:4.13.2")
