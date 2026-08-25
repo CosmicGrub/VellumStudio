@@ -1,6 +1,8 @@
 package com.vellum.studio.ui.editor
 
 import android.graphics.BitmapFactory
+import android.view.DragEvent
+import android.view.View
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.slideInHorizontally
@@ -9,7 +11,6 @@ import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.draganddrop.dragAndDropTarget
 import androidx.compose.foundation.focusable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
@@ -75,9 +76,6 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draganddrop.DragAndDropEvent
-import androidx.compose.ui.draganddrop.DragAndDropTarget
-import androidx.compose.ui.draganddrop.toAndroidDragEvent
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
@@ -646,8 +644,22 @@ internal fun ColorSwatchButton(colorArgb: Int, onClick: () -> Unit) {
  *
  * `internal` (not `private`) so `QuickSketchScreen` in this same package can reuse this exact
  * wiring for the cover-screen quick-capture flow too, instead of a third copy of it.
+ *
+ * Drag-and-drop is wired as a plain platform [View.OnDragListener], NOT a Compose
+ * `Modifier.dragAndDropTarget` on this Box -- that was the original implementation here and it
+ * never fired, for the same reason it never fired on the un-split main-branch Editor canvas:
+ * [DrawingCanvasView] (and the optional GL compositor overlay below) are real platform Views
+ * embedded via AndroidView, sitting as actual children in the Android View hierarchy and exactly
+ * overlapping this Box. Android's platform drag dispatch (ViewGroup.dispatchDragEvent) offers
+ * ACTION_DRAG_STARTED to that concrete child View directly; since it had no drag listener of its
+ * own, it silently declined (returned false), and the rest of the drag lifecycle for this region
+ * never reached this Box's own Compose hit-testing -- onEntered/onDrop never ran. Confirmed on
+ * main via temporary diagnostic logging plus live cross-app drags on the Tab S9 FE (see commit
+ * ab284ba); this Fold5 CanvasSurface has the exact same dragAndDropTarget-on-Box-wrapping-
+ * AndroidView pattern, so it gets the exact same fix. The listener is attached directly to both
+ * AndroidView-hosted native views below (DrawingCanvasView and the experimental GL overlay) so
+ * whichever is topmost at drop time actually receives the platform event.
  */
-@OptIn(ExperimentalFoundationApi::class)
 @Composable
 internal fun CanvasSurface(
     engine: CanvasEngine,
@@ -665,42 +677,37 @@ internal fun CanvasSurface(
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     // True while a drag carrying image content is hovering over this surface -- purely a visual
-    // affordance (see the dashed-border overlay below), toggled by the DragAndDropTarget's
-    // onEntered/onExited/onDrop/onEnded callbacks. Local to this composable (not hoisted to
+    // affordance (see the dashed-border overlay below), toggled by referenceImageDragListener's
+    // ACTION_DRAG_ENTERED/EXITED/DROP/ENDED below. Local to this composable (not hoisted to
     // EditorScreen) since only one CanvasSurface is ever on screen at a time.
     var dragHighlightActive by remember { mutableStateOf(false) }
 
-    Box(
-        modifier.dragAndDropTarget(
-            shouldStartDragAndDrop = { event ->
-                event.toAndroidDragEvent().clipDescription?.hasMimeType("image/*") == true
-            },
-            target = remember {
-                object : DragAndDropTarget {
-                    override fun onEntered(event: DragAndDropEvent) {
-                        dragHighlightActive = true
-                    }
-
-                    override fun onExited(event: DragAndDropEvent) {
-                        dragHighlightActive = false
-                    }
-
-                    override fun onEnded(event: DragAndDropEvent) {
-                        dragHighlightActive = false
-                    }
-
-                    override fun onDrop(event: DragAndDropEvent): Boolean {
-                        dragHighlightActive = false
-                        val androidEvent = event.toAndroidDragEvent()
-                        val clipData = androidEvent.clipData ?: return false
-                        if (clipData.itemCount == 0) return false
+    val referenceImageDragListener = remember {
+        View.OnDragListener { _, event ->
+            when (event.action) {
+                DragEvent.ACTION_DRAG_STARTED ->
+                    event.clipDescription?.hasMimeType("image/*") == true
+                DragEvent.ACTION_DRAG_ENTERED -> {
+                    dragHighlightActive = true
+                    true
+                }
+                DragEvent.ACTION_DRAG_EXITED -> {
+                    dragHighlightActive = false
+                    true
+                }
+                DragEvent.ACTION_DROP -> {
+                    dragHighlightActive = false
+                    val clipData = event.clipData
+                    val uri = clipData?.takeIf { it.itemCount > 0 }?.getItemAt(0)?.uri
+                    if (uri == null) {
+                        false
+                    } else {
                         // Cross-app drag content needs an explicit permission grant before this
                         // process's ContentResolver can actually read the dragged content:// Uri --
                         // without this, openInputStream below throws SecurityException instead of
                         // just failing quietly. Has to happen synchronously here, while the
                         // DragEvent is still valid, not after hopping to a coroutine.
-                        (context as? android.app.Activity)?.requestDragAndDropPermissions(androidEvent)
-                        val uri = clipData.getItemAt(0).uri ?: return false
+                        (context as? android.app.Activity)?.requestDragAndDropPermissions(event)
                         scope.launch {
                             val bitmap = withContext(Dispatchers.IO) {
                                 runCatching {
@@ -715,17 +722,25 @@ internal fun CanvasSurface(
                                 onMessage("Couldn't import the dropped image")
                             }
                         }
-                        return true
+                        true
                     }
                 }
-            },
-        ),
-    ) {
+                DragEvent.ACTION_DRAG_ENDED -> {
+                    dragHighlightActive = false
+                    true
+                }
+                else -> true
+            }
+        }
+    }
+
+    Box(modifier) {
         AndroidView(
             modifier = Modifier.fillMaxSize(),
             factory = { ctx ->
                 DrawingCanvasView(ctx).apply {
                     attachEngine(engine)
+                    setOnDragListener(referenceImageDragListener)
                     this.onStrokeCommitted = { onStrokeCommitted() }
                     this.onStrokeActiveChanged = { active -> onStrokeActiveChanged(active) }
                     this.onTransformChanged = { onTransformChanged() }
@@ -752,6 +767,7 @@ internal fun CanvasSurface(
                 factory = { ctx ->
                     LayerCompositorGLView(ctx).apply {
                         attach(engine) { drawingViewRef.value?.currentMatrixSnapshot() ?: android.graphics.Matrix() }
+                        setOnDragListener(referenceImageDragListener)
                         glViewRef.value = this
                     }
                 },
@@ -764,7 +780,7 @@ internal fun CanvasSurface(
         }
 
         // Purely a visual drop-zone affordance while an image drag hovers over this surface (see
-        // the dragAndDropTarget above) -- never touches any layer content itself.
+        // referenceImageDragListener above) -- never touches any layer content itself.
         if (dragHighlightActive) {
             Box(
                 Modifier
