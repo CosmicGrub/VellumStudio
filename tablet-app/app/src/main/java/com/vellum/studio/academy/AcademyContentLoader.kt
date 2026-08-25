@@ -42,6 +42,9 @@ object AcademyContentLoader {
     /** Bump alongside a real, deliberate shape change to [CourseContentDto] -- see that class's doc. */
     const val CURRENT_SCHEMA_VERSION = 1
 
+    /** Matches an opaque "#RRGGBB" hex color -- the shape every [DiagramOpDto] color field expects. */
+    private val HEX_COLOR_REGEX = Regex("^#[0-9A-Fa-f]{6}$")
+
     // Strict on purpose -- the opposite tradeoff from ProjectRepository's Json (which must tolerate
     // old/corrupted on-disk USER project files without ever crashing a real user's app). This
     // content is authored and reviewed before it ships, never user-supplied, so an unknown field
@@ -119,7 +122,114 @@ object AcademyContentLoader {
                         if (block.assetPath.isBlank()) fail("$blockLabel (masterworkReference) has a blank assetPath")
                         if (block.attribution.isBlank()) fail("$blockLabel (masterworkReference) has a blank attribution")
                     }
+                    is LessonBlockDto.Diagram -> {
+                        if (block.caption.isBlank()) fail("$blockLabel (diagram) has a blank caption")
+                        if (block.ops.isEmpty()) fail("$blockLabel (diagram) has no ops")
+                        block.ops.forEachIndexed { opIndex, op ->
+                            validateDiagramOp(op, "$blockLabel (diagram) op #$opIndex", ::fail)
+                        }
+                    }
                 }
+            }
+        }
+    }
+
+    /**
+     * Applies the same "fail loudly, at build/test time" discipline to every [DiagramOpDto]: valid
+     * hex colors, at least one of fill/stroke actually present on a shape op, a positive stroke
+     * width whenever a stroke color is given, coordinates within the normalized 0..1 canvas every
+     * hand-coded Diagram closure already assumes, and a non-empty [DiagramOpDto.Path.commands]
+     * list starting with a `moveTo` (mirroring what every real hand-coded Diagram path does, and
+     * what `android.graphics.Path` itself needs for a sensible outline).
+     */
+    private fun validateDiagramOp(op: DiagramOpDto, label: String, fail: (String) -> Nothing) {
+        fun requireUnitRange(value: Float, fieldName: String) {
+            if (value < 0f || value > 1f) fail("$label has $fieldName $value outside the normalized 0..1 range")
+        }
+
+        // A pure-Kotlin format check (never android.graphics.Color.parseColor) so this validation --
+        // like the rest of AcademyContentLoader's pure logic -- stays a plain JVM unit test with no
+        // Robolectric/Android scaffolding; see this class's own doc for why that separation matters.
+        fun requireValidHexColor(hexColor: String, fieldName: String) {
+            if (!HEX_COLOR_REGEX.matches(hexColor)) {
+                fail("$label has an invalid $fieldName '$hexColor' (expected a '#RRGGBB' hex color)")
+            }
+        }
+
+        fun requireValidAlpha(alpha: Float) {
+            if (alpha < 0f || alpha > 1f) fail("$label has alpha $alpha outside the 0..1 range")
+        }
+
+        fun requireValidDash(dash: List<Float>?) {
+            if (dash != null && (dash.size != 2 || dash.any { it <= 0f })) {
+                fail("$label has an invalid dash pattern $dash (expected exactly 2 positive fractions: [dashLength, gapLength])")
+            }
+        }
+
+        fun requireFillOrStroke(fillColor: String?, strokeColor: String?, strokeWidth: Float) {
+            if (fillColor == null && strokeColor == null) fail("$label has neither a fillColor nor a strokeColor")
+            fillColor?.let { requireValidHexColor(it, "fillColor") }
+            strokeColor?.let {
+                requireValidHexColor(it, "strokeColor")
+                if (strokeWidth <= 0f) fail("$label has a strokeColor but a non-positive strokeWidth ($strokeWidth)")
+            }
+        }
+
+        when (op) {
+            is DiagramOpDto.Line -> {
+                requireUnitRange(op.x1, "x1"); requireUnitRange(op.y1, "y1")
+                requireUnitRange(op.x2, "x2"); requireUnitRange(op.y2, "y2")
+                requireValidHexColor(op.color, "color")
+                if (op.strokeWidth <= 0f) fail("$label has a non-positive strokeWidth (${op.strokeWidth})")
+                requireValidAlpha(op.alpha)
+                requireValidDash(op.dash)
+            }
+            is DiagramOpDto.Circle -> {
+                requireUnitRange(op.cx, "cx"); requireUnitRange(op.cy, "cy")
+                if (op.r <= 0f) fail("$label has a non-positive radius (${op.r})")
+                requireFillOrStroke(op.fillColor, op.strokeColor, op.strokeWidth)
+                requireValidAlpha(op.alpha)
+                requireValidDash(op.dash)
+            }
+            is DiagramOpDto.Rect -> {
+                requireUnitRange(op.left, "left"); requireUnitRange(op.top, "top")
+                requireUnitRange(op.right, "right"); requireUnitRange(op.bottom, "bottom")
+                if (op.left >= op.right) fail("$label has left (${op.left}) >= right (${op.right})")
+                if (op.top >= op.bottom) fail("$label has top (${op.top}) >= bottom (${op.bottom})")
+                requireFillOrStroke(op.fillColor, op.strokeColor, op.strokeWidth)
+                requireValidAlpha(op.alpha)
+                requireValidDash(op.dash)
+            }
+            is DiagramOpDto.Text -> {
+                requireUnitRange(op.x, "x"); requireUnitRange(op.y, "y")
+                if (op.text.isBlank()) fail("$label (text) has blank text")
+                requireValidHexColor(op.color, "color")
+                if (op.textSize <= 0f) fail("$label has a non-positive textSize (${op.textSize})")
+                requireValidAlpha(op.alpha)
+            }
+            is DiagramOpDto.Path -> {
+                if (op.commands.isEmpty()) fail("$label (path) has no commands")
+                val first = op.commands.first()
+                if (first !is PathCommandDto.MoveTo) fail("$label (path) must start with a moveTo")
+                op.commands.forEachIndexed { i, command ->
+                    val coords = when (command) {
+                        is PathCommandDto.MoveTo -> listOf("x" to command.x, "y" to command.y)
+                        is PathCommandDto.LineTo -> listOf("x" to command.x, "y" to command.y)
+                        is PathCommandDto.QuadTo -> listOf(
+                            "controlX" to command.controlX, "controlY" to command.controlY,
+                            "x" to command.x, "y" to command.y,
+                        )
+                        is PathCommandDto.CubicTo -> listOf(
+                            "control1X" to command.control1X, "control1Y" to command.control1Y,
+                            "control2X" to command.control2X, "control2Y" to command.control2Y,
+                            "x" to command.x, "y" to command.y,
+                        )
+                    }
+                    coords.forEach { (fieldName, value) -> requireUnitRange(value, "command #$i $fieldName") }
+                }
+                requireFillOrStroke(op.fillColor, op.strokeColor, op.strokeWidth)
+                requireValidAlpha(op.alpha)
+                requireValidDash(op.dash)
             }
         }
     }
@@ -145,5 +255,6 @@ object AcademyContentLoader {
         is LessonBlockDto.Tip -> LessonBlock.Tip(text)
         is LessonBlockDto.BulletList -> LessonBlock.BulletList(items)
         is LessonBlockDto.MasterworkReference -> LessonBlock.MasterworkReference(caption, assetPath, attribution)
+        is LessonBlockDto.Diagram -> LessonBlock.Diagram(caption, DiagramRenderer.render(ops))
     }
 }

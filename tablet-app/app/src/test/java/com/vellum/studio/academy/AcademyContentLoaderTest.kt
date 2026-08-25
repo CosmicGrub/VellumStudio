@@ -153,6 +153,108 @@ class AcademyContentLoaderTest {
         error("unreachable")
     }
 
+    // --- Diagram blocks: happy path plus the same "fail loudly" discipline as every other block ---
+
+    private val diagramLineOp =
+        """{"type": "line", "x1": 0.1, "y1": 0.1, "x2": 0.9, "y2": 0.9, "color": "#FF0000", "strokeWidth": 0.01}"""
+
+    private fun courseWithDiagramOps(opsJson: String, caption: String = "A test diagram") = """
+        {
+          "schemaVersion": 1,
+          "id": "test-course",
+          "title": "Test Course",
+          "description": "A course for testing.",
+          "instructorId": "rowan",
+          "lessons": [
+            {
+              "id": "lesson-one",
+              "title": "Lesson One",
+              "summary": "The first lesson.",
+              "blocks": [
+                {"type": "diagram", "caption": "$caption", "ops": [$opsJson]}
+              ]
+            }
+          ]
+        }
+    """.trimIndent()
+
+    @Test fun `a diagram block with a valid op parses into a LessonBlock Diagram with the right caption`() {
+        val course = AcademyContentLoader.parseAndValidate(courseWithDiagramOps(diagramLineOp))
+        val block = course.lessons.single().blocks.single()
+        assertTrue(block is LessonBlock.Diagram)
+        assertEquals("A test diagram", (block as LessonBlock.Diagram).caption)
+    }
+
+    @Test fun `a diagram block with no ops is rejected`() {
+        val emptyOps = courseWithDiagramOps(diagramLineOp).replace("\"ops\": [$diagramLineOp]", "\"ops\": []")
+        assertThrowsAcademyContentException { AcademyContentLoader.parseAndValidate(emptyOps) }
+    }
+
+    @Test fun `a blank diagram caption is rejected`() {
+        val json = courseWithDiagramOps(diagramLineOp, caption = "   ")
+        assertThrowsAcademyContentException { AcademyContentLoader.parseAndValidate(json) }
+    }
+
+    @Test fun `a diagram op with an invalid hex color is rejected`() {
+        val badColor = courseWithDiagramOps(diagramLineOp.replace("\"#FF0000\"", "\"red\""))
+        val e = assertThrowsAcademyContentException { AcademyContentLoader.parseAndValidate(badColor) }
+        assertTrue(e.message.orEmpty().contains("hex", ignoreCase = true))
+    }
+
+    @Test fun `a diagram op coordinate outside 0 to 1 is rejected`() {
+        val outOfRange = courseWithDiagramOps(diagramLineOp.replace("\"x1\": 0.1", "\"x1\": 1.5"))
+        assertThrowsAcademyContentException { AcademyContentLoader.parseAndValidate(outOfRange) }
+    }
+
+    @Test fun `a line op with an out-of-range alpha is rejected`() {
+        val badAlpha = courseWithDiagramOps(diagramLineOp.dropLast(1) + ", \"alpha\": 1.5}")
+        assertThrowsAcademyContentException { AcademyContentLoader.parseAndValidate(badAlpha) }
+    }
+
+    @Test fun `a line op with a malformed dash pattern is rejected`() {
+        val badDash = courseWithDiagramOps(diagramLineOp.dropLast(1) + ", \"dash\": [0.1]}")
+        assertThrowsAcademyContentException { AcademyContentLoader.parseAndValidate(badDash) }
+    }
+
+    @Test fun `a circle op with neither fillColor nor strokeColor is rejected`() {
+        val bareCircle = """{"type": "circle", "cx": 0.5, "cy": 0.5, "r": 0.1}"""
+        assertThrowsAcademyContentException { AcademyContentLoader.parseAndValidate(courseWithDiagramOps(bareCircle)) }
+    }
+
+    @Test fun `a rect op with a strokeColor but no positive strokeWidth is rejected`() {
+        val badRect =
+            """{"type": "rect", "left": 0.1, "top": 0.1, "right": 0.9, "bottom": 0.9, "strokeColor": "#000000"}"""
+        assertThrowsAcademyContentException { AcademyContentLoader.parseAndValidate(courseWithDiagramOps(badRect)) }
+    }
+
+    @Test fun `a path op with commands that don't start with moveTo is rejected`() {
+        val badPath =
+            """{"type": "path", "commands": [{"type": "lineTo", "x": 0.5, "y": 0.5}], "fillColor": "#000000"}"""
+        assertThrowsAcademyContentException { AcademyContentLoader.parseAndValidate(courseWithDiagramOps(badPath)) }
+    }
+
+    @Test fun `a path op with no commands is rejected`() {
+        val emptyPath = """{"type": "path", "commands": [], "fillColor": "#000000"}"""
+        assertThrowsAcademyContentException { AcademyContentLoader.parseAndValidate(courseWithDiagramOps(emptyPath)) }
+    }
+
+    @Test fun `a text op with blank text is rejected`() {
+        val blankText =
+            """{"type": "text", "x": 0.5, "y": 0.5, "text": "   ", "color": "#000000", "textSize": 0.05}"""
+        assertThrowsAcademyContentException { AcademyContentLoader.parseAndValidate(courseWithDiagramOps(blankText)) }
+    }
+
+    @Test fun `an unrecognized diagram op type is rejected as malformed`() {
+        val bogusOp = """{"type": "hexagon", "cx": 0.5}"""
+        assertThrowsAcademyContentException { AcademyContentLoader.parseAndValidate(courseWithDiagramOps(bogusOp)) }
+    }
+
+    @Test fun `an unrecognized text align value is rejected as malformed`() {
+        val badAlign =
+            """{"type": "text", "x": 0.5, "y": 0.5, "text": "hi", "color": "#000000", "textSize": 0.05, "align": "middle"}"""
+        assertThrowsAcademyContentException { AcademyContentLoader.parseAndValidate(courseWithDiagramOps(badAlign)) }
+    }
+
     // --- End-to-end proof: the real, checked-in, migrated course actually works -------------------
 
     /**
@@ -246,5 +348,51 @@ class AcademyContentLoaderTest {
             assertEquals(null, lesson.demo)
         }
         assertEquals(course, AcademyContentLoader.parseAndValidate(file.readText()))
+    }
+
+    /**
+     * The real proof migration for [LessonBlockDto.Diagram]: [CoursePerspective], the first course
+     * whose content includes real diagrams (not just Heading/Paragraph/BulletList/Tip). Picked for
+     * exactly that reason -- it's Diagram-heavy and has no [LessonDemo], a clean first test of just
+     * the new diagram capability.
+     */
+    @Test fun `the real migrated perspective course loads and validates end-to-end, including its two diagrams`() {
+        val file = File("src/main/assets/academy/perspective.json")
+        assertTrue("expected bundled asset at ${file.absolutePath}", file.exists())
+
+        val course = AcademyContentLoader.parseAndValidate(file.readText(), sourceLabel = file.path)
+
+        assertEquals("perspective", course.id)
+        assertEquals("Perspective Basics", course.title)
+        assertEquals(Instructors.rowan.id, course.instructorId)
+        assertEquals(5, course.lessons.size)
+        assertEquals(
+            listOf(
+                "what-perspective-solves",
+                "one-point-perspective",
+                "two-point-perspective",
+                "eye-level-and-horizon",
+                "perspective-everyday-objects",
+            ),
+            course.lessons.map { it.id },
+        )
+        course.lessons.forEach { lesson ->
+            assertFalse("lesson '${lesson.id}' should have real content blocks", lesson.blocks.isEmpty())
+            assertEquals(null, lesson.demo)
+        }
+
+        // Unlike the end-to-end tests above, this one does NOT re-parse and `assertEquals` the
+        // whole Course: LessonBlock.Diagram wraps a real `(Canvas, Int) -> Unit` closure, and two
+        // separately-built closures for the identical op list are never `==` to each other (Kotlin
+        // function types compare by reference, not content) -- a property of LessonBlock.Diagram
+        // itself, unrelated to this migration. Instead, confirm the two real diagrams landed as
+        // real LessonBlock.Diagram values carrying their real captions.
+        val onePointDiagram = course.lessons.single { it.id == "one-point-perspective" }.blocks
+            .filterIsInstance<LessonBlock.Diagram>().single()
+        assertEquals("A horizon line, one vanishing point, and a box built from it", onePointDiagram.caption)
+
+        val twoPointDiagram = course.lessons.single { it.id == "two-point-perspective" }.blocks
+            .filterIsInstance<LessonBlock.Diagram>().single()
+        assertEquals("One vertical corner edge, two vanishing points, two receding faces", twoPointDiagram.caption)
     }
 }
