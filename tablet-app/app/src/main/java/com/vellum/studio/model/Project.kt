@@ -1,6 +1,8 @@
 package com.vellum.studio.model
 
 import com.vellum.studio.util.DeviceCapabilities
+import kotlinx.serialization.EncodeDefault
+import kotlinx.serialization.ExperimentalSerializationApi
 import kotlinx.serialization.Serializable
 import java.io.File
 
@@ -22,6 +24,7 @@ data class LayerMeta(
 )
 
 /** On-disk project record. Layer pixel data lives alongside as `layers/<id>.png`, not inline here. */
+@OptIn(ExperimentalSerializationApi::class)
 @Serializable
 data class ProjectMeta(
     val id: String,
@@ -32,7 +35,32 @@ data class ProjectMeta(
     val updatedAt: Long,
     val layers: List<LayerMeta>,
     val activeLayerIndex: Int = 0,
-)
+    // On-disk format version. Every project saved before this field existed has no `schemaVersion`
+    // key in its metadata.json at all -- ProjectRepository always runs the raw JSON through
+    // ProjectSchemaMigrator.migrate() before decoding, which is what actually resolves that missing
+    // key to version 1 (see ProjectSchemaMigrator.versionOf). The default here only matters for code
+    // that builds a ProjectMeta directly in memory (createProject/createFromTemplate) or in tests.
+    //
+    // @EncodeDefault is required and not just belt-and-suspenders: ProjectRepository's Json is
+    // configured with the library's own default of `encodeDefaults = false`, which omits any field
+    // left at its declared default -- and this field's default is *defined* as "whatever
+    // CURRENT_SCHEMA_VERSION currently is", so a freshly-saved, genuinely-current file would
+    // otherwise ALWAYS have a value equal to its own default and silently never get a
+    // `schemaVersion` key at all, regardless of how many times CURRENT_SCHEMA_VERSION is bumped in
+    // the future -- indistinguishable on disk from a file saved before this field existed. Confirmed
+    // this the hard way against a real save on R52X101MB6W before adding this annotation.
+    @EncodeDefault
+    val schemaVersion: Int = CURRENT_SCHEMA_VERSION,
+) {
+    companion object {
+        /**
+         * Bump this by exactly 1 and append one matching [ProjectSchemaMigrator.Step] whenever this
+         * on-disk shape changes -- that pair is the entire cost of a future format change, instead
+         * of an ad-hoc special case scattered through load paths.
+         */
+        const val CURRENT_SCHEMA_VERSION = 1
+    }
+}
 
 /** Lightweight row for the gallery grid — no bitmaps loaded until a project is actually opened. */
 data class ProjectSummary(
