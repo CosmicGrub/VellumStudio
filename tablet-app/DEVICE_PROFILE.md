@@ -150,3 +150,55 @@ a device-access limitation, not a code defect: the build, tests, and install all
 the one thing observed on-device (the app launching and drawing its first frame before the
 keyguard stopped it) showed no crash. Re-run the visual posture walkthrough once the device is
 physically unlocked.
+
+## Follow-up visual regression pass (2026-08-25, post-c3e7ab0)
+
+RFCW80CK2RW was unlocked and reachable this session, closing out the "still needs visual
+confirmation" gap noted above. No code changes were needed -- everything below was confirmed by
+actually looking at the running app, not by re-reading the diff.
+
+- Force-stopped and cold-relaunched `com.vellum.studio` (`am force-stop` + `am start -n
+  com.vellum.studio/.MainActivity`); confirmed via `dumpsys activity activities` that the new
+  process became `topResumedActivity` before screenshotting anything, so nothing below is a stale
+  process.
+- **Gallery:** screenshotted (three scroll positions). Real pre-existing projects render with
+  correct thumbnails alongside the blank `Untitled` scratch projects -- most notably **"Lotus
+  Mandala"** (Aug 24, 2026), whose grid thumbnail is the actual mandala line-art, not a
+  placeholder.
+- **Editor (real project, not blank):** tapped into "Lotus Mandala" from the Gallery. It opened
+  with its full mandala line-art intact and pixel-matching the Gallery thumbnail, confirming the
+  Phase 3 project-file schema versioning/migration did not corrupt pre-existing on-disk projects.
+  Toolbar (Pencil/Ink Pen/Fineliner/Marker/Highlighter, Size/Opacity, undo/redo) rendered normally.
+- **Settings:** screenshotted end to end. Both previously-at-risk cards are present and reachable
+  by scroll, confirming the earlier "Column has no vertical scroll" merge conflict (resolved
+  during the c3e7ab0 merge, see above) is still fixed on this branch/device:
+  - **Pressure curve** -- Soft/Linear/Firm chips (Firm selected) + a working Gamma slider (reading
+    1.80).
+  - **Diagnostics** -- on-device event log viewer showing real timestamped entries, a live
+    "Current size: 615 B" readout, and Export/Clear buttons.
+- **Academy:** opened the course list, scrolled to and opened **"Drawing From Your Own Photos"**
+  (the course migrated to the new JSON content-as-data format). Course-detail screen rendered
+  correctly (description, instructor card, 3 numbered lessons). Opened Lesson 1 ("Turning a Photo
+  Into a Coloring Page") and confirmed all four block types render: Heading, Paragraph, BulletList
+  (with a working "Mark lesson complete" button after it), and a visually distinct Tip callout
+  block. Special characters survived the migration intact -- em dashes throughout ("a photo you
+  took yourself — a pet...") and the arrow glyph in the bulleted steps ("Coloring Book → photo
+  icon (top bar) → pick a photo from your library").
+- **Tabletop/flex-mode layout:** `dumpsys device_state` showed `mCommittedState=CLOSED` (physical
+  hinge sensor reading) at both the start and end of this session -- the device was genuinely
+  folded shut throughout, not flat/open and not HALF_OPENED. Per this branch's confirmed
+  can't-override-the-real-sensor-via-`device_state` behavior, this couldn't be forced, and there
+  was no way to physically re-fold the unit mid-session. All of the screenshots above (Gallery,
+  Editor, Settings, Academy) were therefore taken on the narrow 904x2316 cover screen in the
+  existing single-column `FLAT`-equivalent (`NO_FOLD_FEATURE`) layout, which rendered correctly
+  throughout. **The `HALF_OPENED_TABLETOP` split-pane layout (`TabletopLessonLayout` /
+  canvas-up-top-controls-below) still could not be visually observed this session** -- this
+  remains the one honestly-unverified item from the "Known limitations" section above, unchanged
+  by this pass.
+- **Logcat:** `adb logcat -d` scanned for the full buffer. Zero `FATAL EXCEPTION` lines anywhere
+  in the log. The only `AndroidRuntime: VM exiting with result code -1` lines belong to an
+  unrelated third-party app (`com.tmobile.tuesdays` / `.vpnservice`, an intentional
+  `System.exit(-1)`), not `com.vellum.studio`. No crashes, ANRs, or exceptions tied to
+  `com.vellum.studio` anywhere in the session log.
+
+No bugs found; no code changes made this pass.
