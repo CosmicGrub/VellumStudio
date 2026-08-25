@@ -33,8 +33,22 @@ android {
 
     buildTypes {
         release {
-            isMinifyEnabled = false
+            // Real code shrinking/obfuscation for release builds. Verified end-to-end against a
+            // real :app:assembleRelease install + manual smoke pass on R52X101MB6W (Tab S9 FE) --
+            // see proguard-rules.pro for the specific keep rules this required (kotlinx.serialization
+            // reflection, OpenCV JNI, ML Kit pose detection).
+            isMinifyEnabled = true
+            isShrinkResources = true
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
+            // KNOWN GAP, flagged not fixed here: this project has no production signing config at
+            // all yet -- an actual Play Store release would need a real keystore before this build
+            // type could ship. Signing with the pre-existing debug keystore is a deliberate,
+            // temporary stand-in so a real minified/shrunk *release build type* can actually be
+            // built and adb-installed on a physical device (an unsigned release APK can't be
+            // installed at all) -- which is exactly what this pass needs in order to prove
+            // minification doesn't break anything at runtime. Swap this for a real release
+            // signingConfig before ever distributing a build made with this config.
+            signingConfig = signingConfigs.getByName("debug")
         }
         debug {
             isDebuggable = true
@@ -48,6 +62,23 @@ android {
 
     kotlinOptions {
         jvmTarget = "17"
+    }
+
+    lint {
+        // CI (see .github/workflows/android-ci.yml) runs `:app:lint` and fails the build on any
+        // lint error. Wiring that up for the first time surfaced 6 pre-existing errors (the same
+        // ProduceStateDoesNotAssignValue Compose lint warning repeated across
+        // ColoringBookScreen/GalleryScreen/LayersPanel/LessonScreen's async-bitmap-loading code, in
+        // 5 files) plus 41 warnings that predate this pass and are unrelated to it -- fixing that
+        // Compose idiom across 5 unrelated screens is its own real piece of work, not something to
+        // fold into a CI/release-health pass. A baseline is the standard, honest way to reconcile
+        // "lint must gate CI" with "don't silently retroactively block on debt this pass didn't
+        // create": everything already in lint-baseline.xml (generated via `gradlew
+        // :app:updateLintBaseline` against the pre-existing code) is grandfathered in and reported
+        // but non-fatal, while any *new* issue -- including a regression in one of these same 5
+        // files -- still fails the build. Deliberately not `abortOnError = false`, which would
+        // silence lint's exit code entirely and defeat the point of gating CI on it at all.
+        baseline = file("lint-baseline.xml")
     }
 
     testOptions {
