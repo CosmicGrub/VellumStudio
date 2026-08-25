@@ -15,3 +15,4 @@ dependencyResolutionManagement {
 
 rootProject.name = "VellumStudio"
 include(":app")
+include(":benchmark")

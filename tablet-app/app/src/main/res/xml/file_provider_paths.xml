@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Backs the FileProvider used solely to hand the diagnostic log to the share sheet (Settings >
+     Diagnostics > Export). Scoped to the dedicated files/diagnostics/ subdirectory DiagnosticLog
+     writes into, not the whole files/ root, on a least-exposure basis: nothing else in this app
+     currently shares files this way, and nothing else should become reachable through this
+     provider by accident later. Must name a DIRECTORY, not the log file itself: see
+     DiagnosticLog.kt's DIR_NAME comment for why pointing this at the exact file crashes
+     FileProvider's path-matching arithmetic. -->
+<paths>
+    <files-path name="diagnostics" path="diagnostics/" />
+</paths>

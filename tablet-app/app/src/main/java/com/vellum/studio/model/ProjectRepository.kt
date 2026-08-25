@@ -11,11 +11,20 @@ import com.vellum.studio.art.ColoringTemplate
 import com.vellum.studio.canvas.CanvasEngine
 import com.vellum.studio.canvas.Layer
 import com.vellum.studio.canvas.LayerBlendMode
+import com.vellum.studio.util.DiagnosticLog
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
-import kotlinx.serialization.decodeFromString
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonArray
+import kotlinx.serialization.json.JsonElement
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.contentOrNull
+import kotlinx.serialization.json.decodeFromJsonElement
+import kotlinx.serialization.json.intOrNull
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.longOrNull
 import java.io.File
 import java.io.FileOutputStream
 import java.util.UUID
@@ -34,7 +43,15 @@ import java.util.zip.ZipOutputStream
  */
 class ProjectRepository(private val appContext: Context) {
 
-    private val json = Json { ignoreUnknownKeys = true; prettyPrint = true }
+    // ignoreUnknownKeys: an unrecognized field (e.g. saved by a newer build) is dropped, not fatal.
+    // coerceInputValues: a field whose value doesn't match its type (wrong JSON type, or `null` for
+    // a non-nullable type) falls back to that field's Kotlin default instead of failing the whole
+    // decode -- the same discipline CustomBrushRepository/PaletteRepository already use, just with
+    // this extra flag, which matters more here because ProjectMeta/LayerMeta actually have defaulted
+    // fields (locked, isReferenceImage, activeLayerIndex, schemaVersion) worth falling back on. This
+    // still can't save a field with no default (id, widthPx, layers itself, ...) -- that's what
+    // loadOrRecoverMeta's manual fallback below is for.
+    private val json = Json { ignoreUnknownKeys = true; coerceInputValues = true; prettyPrint = true }
 
     private val projectsRoot: File
         get() = File(appContext.getExternalFilesDir(null), "projects").apply { mkdirs() }
@@ -44,15 +61,126 @@ class ProjectRepository(private val appContext: Context) {
     private fun layersDir(id: String) = File(dirFor(id), "layers").apply { mkdirs() }
     private fun thumbFile(id: String) = File(dirFor(id), "thumbnail.png")
 
+    /**
+     * Reads project [id]'s metadata as defensively as possible, in three widening layers -- each
+     * one only kicks in if the layer before it wasn't enough to produce a valid [ProjectMeta]:
+     *
+     * 1. Parse metadata.json, run it through [ProjectSchemaMigrator], decode normally. This is the
+     *    fast path and handles every project on disk today.
+     * 2. If that decode throws (a field present with a value the current model can't accept, and
+     *    with no usable default for [json]'s `coerceInputValues` to fall back on), reconstruct
+     *    [ProjectMeta] field-by-field in [decodeLeniently], dropping only the individual layer
+     *    entries that don't decode -- not the whole project.
+     * 3. If metadata.json is missing or too damaged to parse as JSON at all, [recoverFromLayerFiles]
+     *    rebuilds a minimal project directly from whatever `layers/&lt;id&gt;.png` files still exist -- the
+     *    actual artwork survives even when every byte of metadata describing it is gone.
+     *
+     * Returns null only when none of the three has anything to recover (no metadata AND no layer
+     * files) -- i.e. there is genuinely no project here.
+     */
+    private fun loadOrRecoverMeta(id: String): ProjectMeta? {
+        val mf = metaFile(id)
+        if (!mf.exists()) return recoverFromLayerFiles(id)
+        return runCatching {
+            val root = json.parseToJsonElement(mf.readText()).jsonObject
+            val migrated = ProjectSchemaMigrator.migrate(root)
+            runCatching { json.decodeFromJsonElement<ProjectMeta>(migrated) }
+                .getOrElse { decodeLeniently(id, migrated) }
+        }.getOrElse { e ->
+            DiagnosticLog.log(appContext, "ProjectRepository", "metadata.json unreadable for project $id (${e.message}); recovering from layer files")
+            recoverFromLayerFiles(id)
+        }
+    }
+
+    /**
+     * Manually pulls [ProjectMeta]'s fields out of [obj] one at a time instead of one atomic
+     * `decodeFromJsonElement` call, so a single corrupted field can be replaced with a sane
+     * fallback instead of failing the entire project. [layers] gets the same treatment one level
+     * down: each element is decoded independently, and any that doesn't decode is dropped (logged,
+     * never silently) rather than taking every other layer down with it. Any layer PNG on disk that
+     * survived but isn't referenced by a decoded [LayerMeta] is folded back in as a recovered layer
+     * so its pixels are never orphaned by a metadata problem alone.
+     */
+    private fun decodeLeniently(id: String, obj: JsonObject): ProjectMeta {
+        fun JsonElement?.str(fallback: String) = (this as? JsonPrimitive)?.contentOrNull ?: fallback
+        fun JsonElement?.int(fallback: Int) = (this as? JsonPrimitive)?.intOrNull ?: fallback
+        fun JsonElement?.long(fallback: Long) = (this as? JsonPrimitive)?.longOrNull ?: fallback
+
+        val decodedLayers = (obj["layers"] as? JsonArray).orEmpty().mapIndexedNotNull { idx, element ->
+            runCatching { json.decodeFromJsonElement<LayerMeta>(element) }
+                .onFailure { DiagnosticLog.log(appContext, "ProjectRepository", "Dropping unreadable layer #$idx for project $id (${it.message})") }
+                .getOrNull()
+        }
+        val referenced = decodedLayers.map { "${it.id}.png" }.toSet()
+        val orphanLayers = (layersDir(id).listFiles { f -> f.extension == "png" && f.name !in referenced } ?: emptyArray())
+            .sortedBy { it.name }
+            .mapIndexed { i, f ->
+                LayerMeta(
+                    id = f.nameWithoutExtension,
+                    name = "Recovered Layer",
+                    opacity = 1f,
+                    visible = true,
+                    blendMode = LayerBlendMode.NORMAL.label,
+                    order = decodedLayers.size + i,
+                )
+            }
+        val layers = decodedLayers + orphanLayers
+        val inferredDim = layers.firstNotNullOfOrNull { peekPngDimensions(File(layersDir(id), "${it.id}.png")) }
+
+        return ProjectMeta(
+            id = obj["id"].str(id),
+            name = obj["name"].str("Recovered Project"),
+            widthPx = obj["widthPx"].int(inferredDim?.first ?: 0),
+            heightPx = obj["heightPx"].int(inferredDim?.second ?: 0),
+            createdAt = obj["createdAt"].long(System.currentTimeMillis()),
+            updatedAt = obj["updatedAt"].long(System.currentTimeMillis()),
+            layers = layers,
+            activeLayerIndex = obj["activeLayerIndex"].int(0).coerceIn(0, (layers.size - 1).coerceAtLeast(0)),
+            schemaVersion = ProjectMeta.CURRENT_SCHEMA_VERSION,
+        )
+    }
+
+    /**
+     * Last resort: metadata.json is missing or wasn't even parseable as JSON. Rebuilds a minimal,
+     * openable [ProjectMeta] directly from whatever `layers/&lt;id&gt;.png` files remain on disk -- the
+     * artwork itself -- inferring canvas dimensions from one of those bitmaps. Returns null only
+     * when there are no layer files either, i.e. nothing survives to recover.
+     */
+    private fun recoverFromLayerFiles(id: String): ProjectMeta? {
+        val files = (layersDir(id).listFiles { f -> f.extension == "png" } ?: emptyArray()).sortedBy { it.name }
+        if (files.isEmpty()) return null
+        val dim = files.firstNotNullOfOrNull { peekPngDimensions(it) } ?: return null
+        DiagnosticLog.log(appContext, "ProjectRepository", "Rebuilding project $id from ${files.size} orphaned layer file(s); metadata.json was missing or unreadable")
+        val layers = files.mapIndexed { i, f ->
+            LayerMeta(id = f.nameWithoutExtension, name = "Recovered Layer ${i + 1}", opacity = 1f, visible = true, blendMode = LayerBlendMode.NORMAL.label, order = i)
+        }
+        val now = System.currentTimeMillis()
+        return ProjectMeta(
+            id = id,
+            name = "Recovered Project",
+            widthPx = dim.first,
+            heightPx = dim.second,
+            createdAt = now,
+            updatedAt = now,
+            layers = layers,
+            activeLayerIndex = 0,
+            schemaVersion = ProjectMeta.CURRENT_SCHEMA_VERSION,
+        )
+    }
+
+    /** Reads only a PNG's dimensions without decoding its pixels, or null if it isn't a readable PNG. */
+    private fun peekPngDimensions(file: File): Pair<Int, Int>? {
+        if (!file.exists()) return null
+        val opts = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+        BitmapFactory.decodeFile(file.path, opts)
+        return if (opts.outWidth > 0 && opts.outHeight > 0) opts.outWidth to opts.outHeight else null
+    }
+
     suspend fun listProjects(): List<ProjectSummary> = withContext(Dispatchers.IO) {
         val dirs = projectsRoot.listFiles { f -> f.isDirectory } ?: emptyArray()
         dirs.mapNotNull { dir ->
-            val mf = File(dir, "metadata.json")
-            if (!mf.exists()) return@mapNotNull null
-            runCatching {
-                val meta = json.decodeFromString<ProjectMeta>(mf.readText())
-                ProjectSummary(meta.id, meta.name, meta.widthPx, meta.heightPx, meta.updatedAt, thumbFile(meta.id).takeIf { it.exists() })
-            }.getOrNull()
+            val meta = loadOrRecoverMeta(dir.name) ?: return@mapNotNull null
+            ProjectSummary(meta.id, meta.name, meta.widthPx, meta.heightPx, meta.updatedAt, thumbFile(meta.id).takeIf { it.exists() })
         }.sortedByDescending { it.updatedAt }
     }
 
@@ -70,6 +198,7 @@ class ProjectRepository(private val appContext: Context) {
             updatedAt = now,
             layers = engine.layers.mapIndexed { i, l -> LayerMeta(l.id, l.name, l.opacity, l.visible, l.blendMode.label, i, l.locked, l.isReferenceImage) },
             activeLayerIndex = engine.activeLayerIndex,
+            schemaVersion = ProjectMeta.CURRENT_SCHEMA_VERSION,
         )
         dirFor(id).mkdirs()
         persist(meta, engine)
@@ -103,6 +232,7 @@ class ProjectRepository(private val appContext: Context) {
             updatedAt = now,
             layers = engine.layers.mapIndexed { i, l -> LayerMeta(l.id, l.name, l.opacity, l.visible, l.blendMode.label, i, l.locked, l.isReferenceImage) },
             activeLayerIndex = engine.activeLayerIndex,
+            schemaVersion = ProjectMeta.CURRENT_SCHEMA_VERSION,
         )
         dirFor(id).mkdirs()
         persist(meta, engine)
@@ -110,9 +240,7 @@ class ProjectRepository(private val appContext: Context) {
     }
 
     suspend fun loadProject(id: String): Pair<ProjectMeta, CanvasEngine>? = withContext(Dispatchers.IO) {
-        val mf = metaFile(id)
-        if (!mf.exists()) return@withContext null
-        val meta = json.decodeFromString<ProjectMeta>(mf.readText())
+        val meta = loadOrRecoverMeta(id) ?: return@withContext null
         val engine = CanvasEngine(meta.widthPx, meta.heightPx)
         for (lm in meta.layers.sortedBy { it.order }) {
             val file = File(layersDir(id), "${lm.id}.png")
@@ -141,6 +269,7 @@ class ProjectRepository(private val appContext: Context) {
         }
         if (engine.layers.isEmpty()) engine.addLayer("Layer 1")
         engine.activeLayerIndex = meta.activeLayerIndex.coerceIn(0, engine.layers.size - 1)
+        DiagnosticLog.log(appContext, "ProjectRepository", "Project opened (id=$id, name=${meta.name}, layers=${engine.layers.size})")
         meta to engine
     }
 
@@ -151,6 +280,7 @@ class ProjectRepository(private val appContext: Context) {
             activeLayerIndex = engine.activeLayerIndex,
         )
         persist(updated, engine)
+        DiagnosticLog.log(appContext, "ProjectRepository", "Project saved (id=${updated.id}, name=${updated.name}, layers=${updated.layers.size})")
         updated
     }
 

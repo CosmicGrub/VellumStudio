@@ -1,6 +1,9 @@
 package com.vellum.studio.canvas
 
 import android.graphics.Bitmap
+import com.vellum.studio.VellumApp
+import com.vellum.studio.util.DiagnosticLog
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import org.opencv.android.OpenCVLoader
@@ -59,6 +62,17 @@ object PhotoConverter {
      * sky, say) gets rejected purely for having few regions.
      */
     private const val MIN_REGIONS_FOR_PAINT_BY_NUMBER = 3
+
+    /**
+     * Pure region-count -> eligibility decision, split out of [convert] purely so this specific
+     * threshold logic is directly unit-testable: everything else in this object is entangled with
+     * a live OpenCV native call chain and a real [Bitmap], neither of which a plain JVM unit test
+     * can construct, but this decision itself never touches either. See
+     * [MIN_REGIONS_FOR_PAINT_BY_NUMBER]'s own doc for the reasoning behind the threshold value;
+     * this function only applies that decision, it doesn't own the reasoning.
+     */
+    internal fun eligibleForPaintByNumber(regionCount: Int): Boolean =
+        regionCount >= MIN_REGIONS_FOR_PAINT_BY_NUMBER
 
     private val openCvReady = AtomicBoolean(false)
 
@@ -143,18 +157,36 @@ object PhotoConverter {
      */
     suspend fun convert(source: Bitmap, preset: Preset): PhotoConversionResult =
         withContext(Dispatchers.Default) {
-            ensureOpenCvLoaded()
-
-            val reference = makeReference(source)
-            val lineArt = makeLineArt(source, preset)
-
-            val regionMap = RegionAnalyzer.analyze(lineArt)
-            PhotoConversionResult(
-                reference = reference,
-                lineArt = lineArt,
-                isPaintByNumberEligible = regionMap.regions.size >= MIN_REGIONS_FOR_PAINT_BY_NUMBER,
-                regionCount = regionMap.regions.size,
+            DiagnosticLog.log(
+                VellumApp.instance, "PhotoConverter",
+                "Photo conversion started (preset=${preset.label}, ${source.width}x${source.height})",
             )
+            try {
+                ensureOpenCvLoaded()
+
+                val reference = makeReference(source)
+                val lineArt = makeLineArt(source, preset)
+
+                val regionMap = RegionAnalyzer.analyze(lineArt)
+                val result = PhotoConversionResult(
+                    reference = reference,
+                    lineArt = lineArt,
+                    isPaintByNumberEligible = eligibleForPaintByNumber(regionMap.regions.size),
+                    regionCount = regionMap.regions.size,
+                )
+                DiagnosticLog.log(
+                    VellumApp.instance, "PhotoConverter",
+                    "Photo conversion finished (regions=${result.regionCount}, paintByNumberEligible=${result.isPaintByNumberEligible})",
+                )
+                result
+            } catch (c: CancellationException) {
+                // Normal coroutine cancellation (e.g. the caller navigated away mid-conversion),
+                // not a real failure -- must still propagate, just not logged as one.
+                throw c
+            } catch (t: Throwable) {
+                DiagnosticLog.log(VellumApp.instance, "PhotoConverter", "Photo conversion failed: ${t::class.java.simpleName}: ${t.message}")
+                throw t
+            }
         }
 
     /** Plain resize (no OpenCV needed for this half) -- mirrors make_reference()'s long-edge downscale. */

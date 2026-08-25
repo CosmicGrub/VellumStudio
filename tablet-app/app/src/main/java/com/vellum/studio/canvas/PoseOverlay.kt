@@ -6,6 +6,8 @@ import com.google.mlkit.vision.pose.Pose
 import com.google.mlkit.vision.pose.PoseDetection
 import com.google.mlkit.vision.pose.PoseLandmark
 import com.google.mlkit.vision.pose.accurate.AccuratePoseDetectorOptions
+import com.vellum.studio.VellumApp
+import com.vellum.studio.util.DiagnosticLog
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withContext
@@ -69,7 +71,17 @@ object PoseOverlay {
      * caller's dispatcher; safe to call from a Compose coroutine scope.
      */
     suspend fun detectPose(source: Bitmap): PoseGuide? = withContext(Dispatchers.Default) {
-        runCatching { detectPoseOrThrow(source) }.getOrNull()
+        DiagnosticLog.log(VellumApp.instance, "PoseOverlay", "Pose detection started (${source.width}x${source.height})")
+        runCatching { detectPoseOrThrow(source) }.fold(
+            onSuccess = { guide ->
+                DiagnosticLog.log(VellumApp.instance, "PoseOverlay", "Pose detection finished (found=${guide != null})")
+                guide
+            },
+            onFailure = { t ->
+                DiagnosticLog.log(VellumApp.instance, "PoseOverlay", "Pose detection failed: ${t::class.java.simpleName}: ${t.message}")
+                null
+            },
+        )
     }
 
     private suspend fun detectPoseOrThrow(source: Bitmap): PoseGuide? {
