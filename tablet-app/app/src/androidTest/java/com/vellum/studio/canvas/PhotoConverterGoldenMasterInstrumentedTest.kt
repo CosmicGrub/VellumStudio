@@ -68,4 +68,12 @@ class PhotoConverterGoldenMasterInstrumentedTest {
     @Test fun whistlersMother_simple_matchesGoldenMaster() {
         assertMatchesGoldenMaster(PhotoConverterGoldenMaster.WHISTLERS_MOTHER_SIMPLE)
     }
+
+    /**
+     * The "hard case" fixture -- see [PhotoConverterGoldenMaster]'s class doc for why this
+     * specific photo was picked and for the honest finding that it still measures eligible.
+     */
+    @Test fun impressionSunrise_simple_matchesGoldenMaster() {
+        assertMatchesGoldenMaster(PhotoConverterGoldenMaster.IMPRESSION_SUNRISE_SIMPLE)
+    }
 }

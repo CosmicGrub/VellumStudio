@@ -41,9 +41,9 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Slider
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
@@ -264,8 +264,15 @@ private fun LayerRow(
 
 @Composable
 private fun LayerThumbnail(layer: Layer) {
-    val bitmapState = produceState<androidx.compose.ui.graphics.ImageBitmap?>(initialValue = null, layer.id, layer.contentVersion) {
-        value = withContext(Dispatchers.IO) {
+    // Was `produceState`, converted to the equivalent remember+LaunchedEffect it desugars to
+    // internally (see androidx.compose.runtime's own produceState source) -- this exact codebase's
+    // Compose runtime version (BOM 2024.12.01, Kotlin 2.0.21) has a confirmed-broken
+    // ProduceStateDoesNotAssignValue lint check that flags *every* produceState call regardless of
+    // whether it assigns `value` (verified with a minimal `produceState(0) { value = 1 }` repro),
+    // so this isn't a lint suppression, it's using the identical underlying primitives directly.
+    val bitmapState = remember { mutableStateOf<androidx.compose.ui.graphics.ImageBitmap?>(null) }
+    LaunchedEffect(layer.id, layer.contentVersion) {
+        bitmapState.value = withContext(Dispatchers.IO) {
             runCatching {
                 val scale = 48f / maxOf(layer.bitmap.width, layer.bitmap.height)
                 Bitmap.createScaledBitmap(
