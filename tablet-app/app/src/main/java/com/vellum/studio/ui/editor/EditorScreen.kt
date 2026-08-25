@@ -1,6 +1,8 @@
 package com.vellum.studio.ui.editor
 
 import android.graphics.BitmapFactory
+import android.view.DragEvent
+import android.view.View
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.slideInHorizontally
@@ -9,7 +11,6 @@ import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.draganddrop.dragAndDropTarget
 import androidx.compose.foundation.focusable
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -70,9 +71,6 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draganddrop.DragAndDropEvent
-import androidx.compose.ui.draganddrop.DragAndDropTarget
-import androidx.compose.ui.draganddrop.toAndroidDragEvent
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
@@ -468,76 +466,102 @@ fun EditorScreen(
                 loading || engine == null -> CircularProgressIndicator(Modifier.align(Alignment.Center))
                 else -> {
                     val eng = engine!!
+
+                    // Drag-and-drop reference import: a photo dragged in from another app / a
+                    // split-screen window drops onto the canvas and becomes a reference layer via
+                    // the same CanvasEngine.addImageLayer LayersPanel's picker already uses -- zero
+                    // new import UI.
+                    //
+                    // This is a plain platform android.view.View.OnDragListener attached directly
+                    // to the AndroidView-hosted native views below, NOT a Compose
+                    // Modifier.dragAndDropTarget on the surrounding Box. That was the original
+                    // implementation and it never fired: Compose's dragAndDropTarget hit-tests
+                    // against Compose's own semantics/LayoutNode tree, but DrawingCanvasView (and
+                    // the optional GL compositor overlay below) are real platform Views embedded
+                    // via AndroidView, sitting as actual children in the Android View hierarchy and
+                    // exactly overlapping the Box that declared the modifier. Android's platform
+                    // drag dispatch (ViewGroup.dispatchDragEvent) offers ACTION_DRAG_STARTED to
+                    // that concrete child View directly; since it had no drag listener of its own,
+                    // the View's default handling silently declined it (returned false), and the
+                    // rest of the drag lifecycle for that region was routed to the child that
+                    // opted in -- which never included the parent Compose node's own hit-test.
+                    // Confirmed empirically: added temporary logging to both the Compose target
+                    // and a raw View-layer listener and drove real cross-app drags in via adb/
+                    // uiautomator (split-screen with Samsung Gallery) -- during a real
+                    // platform-level drag session (visible in logcat as WindowManager "perform
+                    // drag" / InputManagerService "startDragAndDrop") neither this app's Compose
+                    // callbacks nor the diagnostic View-layer listener ever logged a single event,
+                    // matching the original human tester's report of zero ClipDescription/
+                    // ACTION_DROP/etc. log lines during a real, successful finger-drag. Attaching
+                    // the listener to the actual native View(s) that sit in the real dispatch path
+                    // is the standard fix for this category of Compose/AndroidView drag-and-drop
+                    // interop gap. It's attached to both AndroidViews in this Box (DrawingCanvasView
+                    // and the experimental GL overlay) since whichever is topmost at drop time is
+                    // the one that will actually receive the platform event.
+                    val referenceImageDragListener = View.OnDragListener { _, event ->
+                        when (event.action) {
+                            DragEvent.ACTION_DRAG_STARTED ->
+                                event.clipDescription?.hasMimeType("image/*") == true
+                            DragEvent.ACTION_DRAG_ENTERED -> {
+                                canvasDragHighlightActive = true
+                                true
+                            }
+                            DragEvent.ACTION_DRAG_EXITED -> {
+                                canvasDragHighlightActive = false
+                                true
+                            }
+                            DragEvent.ACTION_DROP -> {
+                                canvasDragHighlightActive = false
+                                val currentEngine = engine
+                                val clipData = event.clipData
+                                val uri = clipData?.takeIf { it.itemCount > 0 }?.getItemAt(0)?.uri
+                                if (currentEngine == null || uri == null) {
+                                    false
+                                } else {
+                                    // Cross-app drag content needs an explicit permission grant
+                                    // before this process's ContentResolver can actually read the
+                                    // dragged content:// Uri -- without this, openInputStream below
+                                    // throws SecurityException instead of just failing quietly. Has
+                                    // to happen synchronously here, while the DragEvent is still
+                                    // valid, not after hopping to a coroutine.
+                                    (context as? android.app.Activity)?.requestDragAndDropPermissions(event)
+                                    scope.launch {
+                                        val bitmap = withContext(Dispatchers.IO) {
+                                            runCatching {
+                                                context.contentResolver.openInputStream(uri)
+                                                    ?.use { BitmapFactory.decodeStream(it) }
+                                            }.getOrNull()
+                                        }
+                                        if (bitmap != null) {
+                                            currentEngine.addImageLayer("Reference", bitmap)
+                                            snackbarHostState.showSnackbar("Reference image added as a new layer")
+                                        } else {
+                                            snackbarHostState.showSnackbar("Couldn't import the dropped image")
+                                        }
+                                    }
+                                    true
+                                }
+                            }
+                            DragEvent.ACTION_DRAG_ENDED -> {
+                                canvasDragHighlightActive = false
+                                true
+                            }
+                            else -> true
+                        }
+                    }
+
                     Column(Modifier.fillMaxSize()) {
                         Box(
                             Modifier
                                 .weight(1f)
-                                .fillMaxWidth()
-                                // Drag-and-drop reference import: a photo dragged in from another
-                                // app / a split-screen window drops straight onto the canvas and
-                                // becomes a reference layer via the same CanvasEngine.addImageLayer
-                                // LayersPanel's picker already uses -- zero new import UI. Scoped to
-                                // just this Box (not the whole screen) so a drop only ever lands
-                                // where it visually looks like it's landing.
-                                .dragAndDropTarget(
-                                    shouldStartDragAndDrop = { event ->
-                                        event.toAndroidDragEvent().clipDescription?.hasMimeType("image/*") == true
-                                    },
-                                    target = remember {
-                                        object : DragAndDropTarget {
-                                            override fun onEntered(event: DragAndDropEvent) {
-                                                canvasDragHighlightActive = true
-                                            }
-
-                                            override fun onExited(event: DragAndDropEvent) {
-                                                canvasDragHighlightActive = false
-                                            }
-
-                                            override fun onEnded(event: DragAndDropEvent) {
-                                                canvasDragHighlightActive = false
-                                            }
-
-                                            override fun onDrop(event: DragAndDropEvent): Boolean {
-                                                canvasDragHighlightActive = false
-                                                val currentEngine = engine ?: return false
-                                                val androidEvent = event.toAndroidDragEvent()
-                                                val clipData = androidEvent.clipData ?: return false
-                                                if (clipData.itemCount == 0) return false
-                                                // Cross-app drag content needs an explicit permission
-                                                // grant before this process's ContentResolver can
-                                                // actually read the dragged content:// Uri -- without
-                                                // this, openInputStream below throws
-                                                // SecurityException instead of just failing quietly.
-                                                // Has to happen synchronously here, while the
-                                                // DragEvent is still valid, not after hopping to a
-                                                // coroutine.
-                                                (context as? android.app.Activity)?.requestDragAndDropPermissions(androidEvent)
-                                                val uri = clipData.getItemAt(0).uri ?: return false
-                                                scope.launch {
-                                                    val bitmap = withContext(Dispatchers.IO) {
-                                                        runCatching {
-                                                            context.contentResolver.openInputStream(uri)
-                                                                ?.use { BitmapFactory.decodeStream(it) }
-                                                        }.getOrNull()
-                                                    }
-                                                    if (bitmap != null) {
-                                                        currentEngine.addImageLayer("Reference", bitmap)
-                                                        snackbarHostState.showSnackbar("Reference image added as a new layer")
-                                                    } else {
-                                                        snackbarHostState.showSnackbar("Couldn't import the dropped image")
-                                                    }
-                                                }
-                                                return true
-                                            }
-                                        }
-                                    },
-                                ),
+                                .fillMaxWidth(),
                         ) {
                             AndroidView(
                                 modifier = Modifier.fillMaxSize(),
                                 factory = { ctx ->
                                     DrawingCanvasView(ctx).apply {
                                         attachEngine(eng)
+                                        setOnDragListener(referenceImageDragListener)
                                         onStrokeCommitted = {
                                             strokesSinceSave++
                                             if (strokesSinceSave >= 6) {
@@ -586,6 +610,7 @@ fun EditorScreen(
                                     factory = { ctx ->
                                         LayerCompositorGLView(ctx).apply {
                                             attach(eng) { drawingViewRef.value?.currentMatrixSnapshot() ?: android.graphics.Matrix() }
+                                            setOnDragListener(referenceImageDragListener)
                                             glViewRef.value = this
                                         }
                                     },
@@ -598,8 +623,8 @@ fun EditorScreen(
                             }
 
                             // Purely a visual drop-zone affordance while an image drag hovers over
-                            // the canvas (see the dragAndDropTarget above) -- never touches any
-                            // layer content itself.
+                            // the canvas (see referenceImageDragListener above) -- never touches
+                            // any layer content itself.
                             if (canvasDragHighlightActive) {
                                 Box(
                                     Modifier
