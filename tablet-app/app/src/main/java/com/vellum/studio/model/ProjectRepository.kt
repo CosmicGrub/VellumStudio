@@ -11,6 +11,7 @@ import com.vellum.studio.art.ColoringTemplate
 import com.vellum.studio.canvas.CanvasEngine
 import com.vellum.studio.canvas.Layer
 import com.vellum.studio.canvas.LayerBlendMode
+import com.vellum.studio.util.DiagnosticLog
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.decodeFromString
@@ -141,6 +142,7 @@ class ProjectRepository(private val appContext: Context) {
         }
         if (engine.layers.isEmpty()) engine.addLayer("Layer 1")
         engine.activeLayerIndex = meta.activeLayerIndex.coerceIn(0, engine.layers.size - 1)
+        DiagnosticLog.log(appContext, "ProjectRepository", "Project opened (id=$id, name=${meta.name}, layers=${engine.layers.size})")
         meta to engine
     }
 
@@ -151,6 +153,7 @@ class ProjectRepository(private val appContext: Context) {
             activeLayerIndex = engine.activeLayerIndex,
         )
         persist(updated, engine)
+        DiagnosticLog.log(appContext, "ProjectRepository", "Project saved (id=${updated.id}, name=${updated.name}, layers=${updated.layers.size})")
         updated
     }
 

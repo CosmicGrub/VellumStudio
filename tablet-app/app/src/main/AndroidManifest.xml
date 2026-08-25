@@ -36,6 +36,20 @@
             </intent-filter>
         </activity>
 
+        <!-- Grants the share sheet temporary read access to the diagnostic log (Settings >
+             Diagnostics > Export) via a content:// Uri, since app-private files/ isn't otherwise
+             reachable outside this app and a plain file:// Uri would violate FileUriExposedException
+             on API 24+. -->
+        <provider
+            android:name="androidx.core.content.FileProvider"
+            android:authorities="${applicationId}.fileprovider"
+            android:exported="false"
+            android:grantUriPermissions="true">
+            <meta-data
+                android:name="android.support.FILE_PROVIDER_PATHS"
+                android:resource="@xml/file_provider_paths" />
+        </provider>
+
     </application>
 
 </manifest>
