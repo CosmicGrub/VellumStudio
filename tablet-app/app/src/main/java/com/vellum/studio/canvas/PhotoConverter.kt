@@ -60,6 +60,17 @@ object PhotoConverter {
      */
     private const val MIN_REGIONS_FOR_PAINT_BY_NUMBER = 3
 
+    /**
+     * Pure region-count -> eligibility decision, split out of [convert] purely so this specific
+     * threshold logic is directly unit-testable: everything else in this object is entangled with
+     * a live OpenCV native call chain and a real [Bitmap], neither of which a plain JVM unit test
+     * can construct, but this decision itself never touches either. See
+     * [MIN_REGIONS_FOR_PAINT_BY_NUMBER]'s own doc for the reasoning behind the threshold value;
+     * this function only applies that decision, it doesn't own the reasoning.
+     */
+    internal fun eligibleForPaintByNumber(regionCount: Int): Boolean =
+        regionCount >= MIN_REGIONS_FOR_PAINT_BY_NUMBER
+
     private val openCvReady = AtomicBoolean(false)
 
     private fun ensureOpenCvLoaded() {
@@ -152,7 +163,7 @@ object PhotoConverter {
             PhotoConversionResult(
                 reference = reference,
                 lineArt = lineArt,
-                isPaintByNumberEligible = regionMap.regions.size >= MIN_REGIONS_FOR_PAINT_BY_NUMBER,
+                isPaintByNumberEligible = eligibleForPaintByNumber(regionMap.regions.size),
                 regionCount = regionMap.regions.size,
             )
         }

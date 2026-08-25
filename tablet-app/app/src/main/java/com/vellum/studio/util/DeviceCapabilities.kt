@@ -28,19 +28,13 @@ object DeviceCapabilities {
 
     val isLowRamDevice: Boolean by lazy { activityManager.isLowRamDevice }
 
-    /** Heap MB actually usable for budgeting, after clamping a low-RAM device down further. */
-    private fun usableMemoryClassMb(): Int = if (isLowRamDevice) memoryClassMb.coerceAtMost(128) else memoryClassMb
-
     /**
      * A safe undo-history memory budget in bytes, scaled to the device's actual declared heap
      * (previously a flat 180MB constant regardless of device). ~15% of the declared heap,
      * clamped to a floor that still gives a low-end device reasonable undo depth and a ceiling
      * that avoids one project hoarding an unreasonable share of a very generous heap.
      */
-    fun undoBudgetBytes(): Long {
-        val budgetMb = (usableMemoryClassMb() * 0.15f).coerceIn(48f, 512f)
-        return (budgetMb * 1024 * 1024).toLong()
-    }
+    fun undoBudgetBytes(): Long = undoBudgetBytesFor(memoryClassMb, isLowRamDevice)
 
     /**
      * The largest single-layer pixel count (width * height) considered safe to offer as a "New
@@ -49,8 +43,29 @@ object DeviceCapabilities {
      * across a conservative nominal concurrent working set — not the hard undo-depth cap, just a
      * "how many full-canvas ARGB_8888 bitmaps might realistically be alive simultaneously" figure.
      */
-    fun maxSafeCanvasPixels(): Long {
-        val canvasBudgetBytes = usableMemoryClassMb().toLong() * 1024L * 1024L / 2L
+    fun maxSafeCanvasPixels(): Long = maxSafeCanvasPixelsFor(memoryClassMb, isLowRamDevice)
+
+    /**
+     * Heap MB actually usable for budgeting, after clamping a low-RAM device down further. Pulled
+     * out to a memoryClassMb/isLowRamDevice-parameterized function -- rather than reading
+     * [memoryClassMb]/[isLowRamDevice] directly -- purely so it (and the two formulas below that
+     * depend on it) is directly unit-testable against known heap-size inputs, without needing a
+     * live `ActivityManager` or a Robolectric fake of one. `internal`, not `private`: a JVM unit
+     * test under `app/src/test` is a separate source set from `app/src/main`, so `internal` is the
+     * minimum visibility that reaches it. [undoBudgetBytes]/[maxSafeCanvasPixels]'s public,
+     * zero-arg API and real behavior are unchanged -- this is the project's established
+     * wrap/extract-rather-than-rewrite pattern, not a rewrite.
+     */
+    internal fun usableMemoryClassMbFor(memoryClassMb: Int, isLowRamDevice: Boolean): Int =
+        if (isLowRamDevice) memoryClassMb.coerceAtMost(128) else memoryClassMb
+
+    internal fun undoBudgetBytesFor(memoryClassMb: Int, isLowRamDevice: Boolean): Long {
+        val budgetMb = (usableMemoryClassMbFor(memoryClassMb, isLowRamDevice) * 0.15f).coerceIn(48f, 512f)
+        return (budgetMb * 1024 * 1024).toLong()
+    }
+
+    internal fun maxSafeCanvasPixelsFor(memoryClassMb: Int, isLowRamDevice: Boolean): Long {
+        val canvasBudgetBytes = usableMemoryClassMbFor(memoryClassMb, isLowRamDevice).toLong() * 1024L * 1024L / 2L
         val nominalConcurrentBitmaps = 7L
         val bytesPerPixel = 4L // ARGB_8888
         return canvasBudgetBytes / (nominalConcurrentBitmaps * bytesPerPixel)
