@@ -76,6 +76,26 @@ object PhotoConverter {
 
     private val openCvReady = AtomicBoolean(false)
 
+    /**
+     * Fixed seed for [Core.kmeans]'s cluster-center init (KMEANS_PP_CENTERS is randomized) --
+     * arbitrary, just needs to be constant. Without this, [Core.kmeans] draws from OpenCV's
+     * global [Core.theRNG] RNG, whose state carries over between calls within the same process;
+     * that made [quantizeAndTraceContours]'s output depend on what other kmeans calls (if any)
+     * happened earlier in the process, not just on its own inputs. See
+     * [PhotoConverterGoldenMaster]'s class doc for the concrete regionCount drift this caused
+     * before this seed was added.
+     *
+     * Deliberately reset right before every [Core.kmeans] call (see [quantizeAndTraceContours]),
+     * not just once here at load time: [ensureOpenCvLoaded]'s own guard only runs its body once
+     * per process, so a one-time seed here would only make the *first* conversion in a process
+     * deterministic -- later conversions in the same process (e.g. converting a second photo in
+     * the same app session, or this fixture's own multi-test instrumented suite) would still
+     * inherit whatever RNG state the previous conversion's kmeans call left behind, reproducing
+     * this exact bug one level up. Seeding at the actual call site is what makes every single
+     * conversion independent of process history.
+     */
+    private const val KMEANS_RNG_SEED = 51
+
     private fun ensureOpenCvLoaded() {
         if (openCvReady.get()) return
         synchronized(this) {
@@ -263,6 +283,9 @@ object PhotoConverter {
         val labels = Mat()
         val centers = Mat()
         val criteria = TermCriteria(TermCriteria.EPS + TermCriteria.MAX_ITER, 20, 0.5)
+        // Reseed immediately before the call -- see [KMEANS_RNG_SEED]'s doc for why this must
+        // happen here and not just once at OpenCV load time.
+        Core.setRNGSeed(KMEANS_RNG_SEED)
         Core.kmeans(samples, preset.toneBands, labels, criteria, 5, Core.KMEANS_PP_CENTERS, centers)
         samples.release()
 

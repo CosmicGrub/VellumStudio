@@ -30,7 +30,7 @@ package com.vellum.studio.canvas
  * with a fresh real on-device run backing the new values -- never edit them to make a failing test
  * pass without re-running the real conversion.
  *
- * All 3 original fixtures came back paint-by-number ELIGIBLE (region counts 35-141, well over the
+ * All 3 original fixtures came back paint-by-number ELIGIBLE (region counts 34-140, well over the
  * 3-region threshold), which left [PhotoConverter.MIN_REGIONS_FOR_PAINT_BY_NUMBER] itself
  * unit-tested (see [PhotoConverterEligibilityTest]) but not proven against a single real photo
  * that actually trips it. [IMPRESSION_SUNRISE_SIMPLE] was added to close that gap and is the
@@ -43,7 +43,7 @@ package com.vellum.studio.canvas
  * the threshold (250 / 159 / 191 regions respectively) so add nothing this single fixture
  * doesn't already cover.
  *
- * It still measured ELIGIBLE (133 regions) here. That is a genuine, reported finding, not a bug
+ * It still measured ELIGIBLE (135 regions) here. That is a genuine, reported finding, not a bug
  * in the fixture: [PhotoConverter.Preset.SIMPLE] was deliberately built more forgiving than
  * generate.py's hand-tuned per-work parameters (see that enum entry's own doc), and closed
  * contours traced from a k-means-quantized binary mask are closed by construction (see this
@@ -57,19 +57,22 @@ package com.vellum.studio.canvas
  * case's region count, so a future change that makes the pipeline meaningfully less forgiving
  * (and pushes this specific photo below threshold) gets caught here.
  *
- * **Known measurement quirk, recorded not hidden**: this specific photo's region count is not
- * perfectly stable -- [Core.kmeans] never seeds OpenCV's global RNG, so its cluster assignment
- * can depend on RNG state left over from whichever kmeans calls ran earlier in the same
- * instrumentation process. Filtered to run alone (e.g.
- * `-Pandroid.testInstrumentationRunnerArguments.class=...#impressionSunrise_simple_matchesGoldenMaster`)
- * this photo measured 130 across repeated runs; run as part of the full, real
- * `connectedDebugAndroidTest` suite (this class's other 3 tests execute their own kmeans calls
- * first) it measured 133, reproducibly, across repeated full-suite runs. 133 -- the number that
- * matches how this suite is actually meant to be run per this class's own doc -- is what's
- * recorded here. The other 3 fixtures did not show this sensitivity in either invocation shape;
- * their cluster structure is apparently distinct enough that RNG-seed differences don't move
- * them. If a future run of the full suite reports a *different* regionCount for this fixture
- * specifically, re-check this quirk before assuming a real regression.
+ * **RNG-order measurement quirk (fixed, kept here for history)**: earlier versions of these
+ * numbers were NOT perfectly stable -- [Core.kmeans] never seeded OpenCV's global RNG, so
+ * [IMPRESSION_SUNRISE_SIMPLE]'s cluster assignment (and, in principle, any fixture's) could depend
+ * on RNG state left over from whichever other kmeans calls ran earlier in the same process.
+ * Filtered to run alone, that photo measured 130 across repeated runs; run as part of the full
+ * `connectedDebugAndroidTest` suite (this class's other 3 tests executed their own kmeans calls
+ * first) it measured 133 instead, reproducibly. [PhotoConverter] now calls
+ * `Core.setRNGSeed(KMEANS_RNG_SEED)` immediately before every [Core.kmeans] call (see that
+ * constant's doc in PhotoConverter.kt), which makes every conversion's kmeans result depend only
+ * on its own inputs, never on process/call history. All 4 numbers recorded in this file as of
+ * 2026-08-25 are POST-FIX, seed-stable values: re-verified by running
+ * `impressionSunrise_simple_matchesGoldenMaster` both alone and as part of the full 4-test suite
+ * and confirming both invocation shapes now report the identical regionCount (135). If a future
+ * run reports a fixture-specific discrepancy between invocation shapes again, that would mean the
+ * seeding fix regressed (e.g. a kmeans call added elsewhere that isn't reseeded) -- treat it as a
+ * real bug, not this historical quirk resurfacing.
  */
 object PhotoConverterGoldenMaster {
 
@@ -85,7 +88,7 @@ object PhotoConverterGoldenMaster {
     val THE_NIGHT_WATCH_SIMPLE = Fixture(
         fileName = "the_night_watch_source.jpg",
         preset = PhotoConverter.Preset.SIMPLE,
-        regionCount = 141,
+        regionCount = 140,
         isPaintByNumberEligible = true,
     )
 
@@ -93,7 +96,7 @@ object PhotoConverterGoldenMaster {
     val ANATOMY_LESSON_SIMPLE = Fixture(
         fileName = "anatomy_lesson_dr_tulp_source.jpg",
         preset = PhotoConverter.Preset.SIMPLE,
-        regionCount = 99,
+        regionCount = 97,
         isPaintByNumberEligible = true,
     )
 
@@ -101,7 +104,7 @@ object PhotoConverterGoldenMaster {
     val WHISTLERS_MOTHER_SIMPLE = Fixture(
         fileName = "whistlers_mother_source.jpg",
         preset = PhotoConverter.Preset.SIMPLE,
-        regionCount = 35,
+        regionCount = 34,
         isPaintByNumberEligible = true,
     )
 
@@ -109,14 +112,15 @@ object PhotoConverterGoldenMaster {
      * The hardest real candidate for tripping [PhotoConverter.eligibleForPaintByNumber]: a hazy,
      * very-low-internal-contrast Impressionist harbor scene, explicitly named in
      * tools/masterart_pipeline/generate.py's module doc as one of 4 works its own hand-tuned
-     * Python pipeline could never segment cleanly. Still measured ELIGIBLE on-device (133
-     * regions, real full-suite run) -- see this object's class doc for the full honest finding,
-     * including a recorded kmeans-RNG measurement quirk specific to this one fixture.
+     * Python pipeline could never segment cleanly. Still measured ELIGIBLE on-device (135
+     * regions, seed-stable -- identical whether run alone or as part of the full suite) -- see
+     * this object's class doc for the full honest finding, including the now-fixed kmeans-RNG
+     * measurement quirk this fixture originally exposed.
      */
     val IMPRESSION_SUNRISE_SIMPLE = Fixture(
         fileName = "impression_sunrise_source.jpg",
         preset = PhotoConverter.Preset.SIMPLE,
-        regionCount = 133,
+        regionCount = 135,
         isPaintByNumberEligible = true,
     )
 
