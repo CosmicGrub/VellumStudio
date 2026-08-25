@@ -24,6 +24,14 @@
         android:largeHeap="true"
         android:banner="@mipmap/ic_launcher">
 
+        <!-- Required by Macrobenchmark (see the ":benchmark" module) so it can read detailed
+             trace data (frame timing, ART compilation state) from a non-debuggable "benchmark" or
+             "release" build via `adb shell`, without making the app debuggable. android:shell="true"
+             scopes this to the shell UID (i.e. adb/UiAutomator) only; it does not expose profiling
+             to arbitrary other apps on the device. Needs no tools:targetApi override since minSdk
+             is already 29, the same level this element itself requires. -->
+        <profileable android:shell="true" />
+
         <activity
             android:name=".MainActivity"
             android:exported="true"

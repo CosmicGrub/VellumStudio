@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    Deliberately minimal: this is a com.android.test module (see build.gradle.kts), so the whole
+    module compiles into one instrumentation-test APK rather than a normal app plus separate
+    androidTest APK pair. AGP synthesizes the <instrumentation> tag and its targetPackage itself
+    from targetProjectPath/testInstrumentationRunner below, so nothing needs to be declared here by
+    hand.
+-->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android" />

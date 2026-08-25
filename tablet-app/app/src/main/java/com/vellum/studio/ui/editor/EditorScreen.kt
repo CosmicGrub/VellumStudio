@@ -560,6 +560,15 @@ fun EditorScreen(
                                 modifier = Modifier.fillMaxSize(),
                                 factory = { ctx ->
                                     DrawingCanvasView(ctx).apply {
+                                        // Also closes a real, pre-existing accessibility gap: this
+                                        // plain custom View had zero contentDescription before, so
+                                        // TalkBack had nothing to announce for the single largest
+                                        // interactive element on screen. Doubles as this project's
+                                        // hook for on-device UiAutomator-driven gesture tests (see
+                                        // benchmark/src/main/java/.../PanZoomFrameTimingBenchmark.kt)
+                                        // to locate this exact View via By.desc(...) rather than a
+                                        // brittle fully-qualified-class-name match.
+                                        contentDescription = "Drawing canvas"
                                         attachEngine(eng)
                                         setOnDragListener(referenceImageDragListener)
                                         onStrokeCommitted = {
