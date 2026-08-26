@@ -1,0 +1,310 @@
+{
+  "schemaVersion": 1,
+  "id": "wet-on-wet-landscapes",
+  "title": "Wet-on-Wet Landscapes",
+  "instructorId": "dune",
+  "description": "Build a whole simple landscape in one sitting by blending colors while they're still wet — big shapes first, a limited palette, and the confidence to paint over anything that isn't working.",
+  "lessons": [
+    {
+      "id": "meet-wet-on-wet",
+      "title": "Meet Wet-on-Wet",
+      "summary": "The core idea behind painting a whole landscape in one sitting: blend while it's still wet, don't wait for layers to dry.",
+      "blocks": [
+        {
+          "type": "paragraph",
+          "text": "Most painting technique is about patience between layers — lay down color, let it dry, add the next thing on top. Wet-on-wet flips that around entirely. You load your brush and pull color directly into color that's still sitting there, wet, and let them meet and blend right on the canvas. Nothing needs to dry first. That one change is what makes it possible to start and finish a whole landscape in a single sitting."
+        },
+        {
+          "type": "heading",
+          "text": "Why Blend Instead of Layer"
+        },
+        {
+          "type": "paragraph",
+          "text": "When two wet colors meet, they don't just sit side by side — they genuinely melt into each other at the seam, the way real sky fades into a real horizon instead of switching colors abruptly. That soft transition is the whole appeal. You're not painting a hard edge and softening it after; you're placing colors so the soft edge happens naturally, in the moment, because they're both still wet."
+        },
+        {
+          "type": "heading",
+          "text": "There Are No Mistakes Here, Just Decisions"
+        },
+        {
+          "type": "paragraph",
+          "text": "This matters more than it sounds like it should: because everything stays workable while it's wet, almost nothing you do is final. Put a mountain in the wrong place? Paint over it — the sky color is still right there, still wet, ready to take the correction. A shape you don't like isn't a mistake to feel bad about, it's just a decision you get to make again, immediately, with no cleanup required. Slow down and let yourself actually believe that while you work through this course — it changes how loose and confident your hand can afford to be."
+        },
+        {
+          "type": "bulletList",
+          "items": [
+            "Wet-on-wet = blending directly into still-wet color, no drying time between passes.",
+            "Soft transitions (sky into horizon, water into shore) come from the technique itself, not from a blur tool.",
+            "Nothing is precious or final while it's wet — painting over an area is the normal way to fix it, not a failure.",
+            "The whole point is working big and loose first, then getting more specific only at the very end."
+          ]
+        },
+        {
+          "type": "tip",
+          "text": "In Vellum Studio, the Watercolor brush is the closest match for this feel today — it's the one brush that both stays soft-edged and genuinely mixes with whatever it overlaps, which is exactly the wet-on-wet behavior this whole course leans on."
+        }
+      ]
+    },
+    {
+      "id": "a-palette-you-actually-need",
+      "title": "A Palette You Actually Need",
+      "summary": "Why fewer colors, chosen deliberately, make a landscape easier to paint and easier to look at.",
+      "blocks": [
+        {
+          "type": "paragraph",
+          "text": "New painters almost always reach for more colors than they need. It feels safer — more options, more chances to get the 'right' color. In practice it does the opposite: too many colors fight each other, and a landscape ends up looking busy instead of calm. A small, deliberate palette does more work than a big one, almost every time."
+        },
+        {
+          "type": "heading",
+          "text": "Start With Five Colors, Not Fifteen"
+        },
+        {
+          "type": "paragraph",
+          "text": "For a simple sky-mountain-water landscape, you genuinely don't need more than: a sky blue, a warm white, a dark neutral (for shadow shapes and mountains), a muted green, and one accent color you actually like. Every other color you need — a mountain's shadowed side, a warmer patch of sky near the horizon — comes from mixing those five while they're wet, not from opening the picker and finding a sixth."
+        },
+        {
+          "type": "heading",
+          "text": "Let Mixing Happen On the Canvas, Not In the Picker"
+        },
+        {
+          "type": "paragraph",
+          "text": "This is the same instinct as picking a limited palette in the first place: pulling a little warm white into wet blue, right on the canvas, gives you a softer sky color that still visibly belongs to the blue it came from. Pre-mixing that exact color in the color picker and painting it as a flat, separate shape loses that connection — it reads as a sticker, not a natural gradient. Whenever you can mix in place instead of in the picker, do that."
+        },
+        {
+          "type": "bulletList",
+          "items": [
+            "Sky blue, warm white, a dark neutral, a muted green, one accent color — that's a complete starter palette.",
+            "Every 'in-between' color should come from blending two palette colors wet, not from picking a sixth color.",
+            "A small palette naturally keeps a landscape feeling unified, because every color in it is related to every other color.",
+            "If a piece feels chaotic, the fix is often removing a color, not adding one."
+          ]
+        },
+        {
+          "type": "tip",
+          "text": "Before starting today's landscape, set up a small custom palette in the color picker with just your five chosen colors. Having a limited, physical set of swatches to choose from — instead of the whole color wheel — makes the decision-making genuinely faster."
+        }
+      ]
+    },
+    {
+      "id": "sky-mountain-water",
+      "title": "Big Shapes First: Sky, Mountain, Water",
+      "summary": "The whole landscape in three big, confident passes — the hands-on core of this course.",
+      "demo": {
+        "stages": [
+          {
+            "caption": "Big shapes first. One broad, confident stroke of sky blue across the whole top — don't be careful, be loose.",
+            "strokes": [
+              {
+                "path": [
+                  {"type": "moveTo", "x": 0.06, "y": 0.16},
+                  {"type": "lineTo", "x": 0.94, "y": 0.16}
+                ],
+                "brushId": "watercolor",
+                "color": "#7FA8D9",
+                "sizeMultiplier": 7.0
+              }
+            ]
+          },
+          {
+            "caption": "Pull a warmer tone in near the horizon while the sky's still wet — that's the blend doing the work, not a hard edge.",
+            "strokes": [
+              {
+                "path": [
+                  {"type": "moveTo", "x": 0.10, "y": 0.44},
+                  {"type": "lineTo", "x": 0.90, "y": 0.44}
+                ],
+                "brushId": "watercolor",
+                "color": "#C9B896",
+                "sizeMultiplier": 5.0
+              }
+            ]
+          },
+          {
+            "caption": "The mountain is just a ridge line — a couple of confident peaks, nothing fussy.",
+            "strokes": [
+              {
+                "path": [
+                  {"type": "moveTo", "x": 0.10, "y": 0.50},
+                  {"type": "lineTo", "x": 0.32, "y": 0.24},
+                  {"type": "lineTo", "x": 0.46, "y": 0.38},
+                  {"type": "lineTo", "x": 0.62, "y": 0.20},
+                  {"type": "lineTo", "x": 0.90, "y": 0.50}
+                ],
+                "brushId": "fineliner",
+                "color": "#4B5A63",
+                "sizeMultiplier": 1.2
+              }
+            ]
+          },
+          {
+            "caption": "Fill the whole shape solid. If it goes slightly outside the line, that's not a mistake — the sky is still wet and forgiving.",
+            "strokes": [
+              {
+                "path": [
+                  {"type": "moveTo", "x": 0.14, "y": 0.48},
+                  {"type": "lineTo", "x": 0.30, "y": 0.30},
+                  {"type": "lineTo", "x": 0.40, "y": 0.44},
+                  {"type": "lineTo", "x": 0.50, "y": 0.28},
+                  {"type": "lineTo", "x": 0.60, "y": 0.42},
+                  {"type": "lineTo", "x": 0.72, "y": 0.26},
+                  {"type": "lineTo", "x": 0.86, "y": 0.48}
+                ],
+                "brushId": "watercolor",
+                "color": "#4B5A63",
+                "sizeMultiplier": 4.5
+              }
+            ]
+          },
+          {
+            "caption": "Water is a mirror with less confidence: same blue, one broad stroke.",
+            "strokes": [
+              {
+                "path": [
+                  {"type": "moveTo", "x": 0.08, "y": 0.58},
+                  {"type": "lineTo", "x": 0.92, "y": 0.58}
+                ],
+                "brushId": "watercolor",
+                "color": "#5F87AE",
+                "sizeMultiplier": 6.0
+              }
+            ]
+          },
+          {
+            "caption": "Echo the mountain's shape upside down and softened — that's the reflection. It doesn't need to match exactly.",
+            "strokes": [
+              {
+                "path": [
+                  {"type": "moveTo", "x": 0.14, "y": 0.62},
+                  {"type": "lineTo", "x": 0.30, "y": 0.70},
+                  {"type": "lineTo", "x": 0.40, "y": 0.64},
+                  {"type": "lineTo", "x": 0.50, "y": 0.72},
+                  {"type": "lineTo", "x": 0.60, "y": 0.65},
+                  {"type": "lineTo", "x": 0.72, "y": 0.71},
+                  {"type": "lineTo", "x": 0.86, "y": 0.62}
+                ],
+                "brushId": "watercolor",
+                "color": "#4B5A63",
+                "sizeMultiplier": 2.5
+              }
+            ]
+          }
+        ]
+      },
+      "blocks": [
+        {
+          "type": "paragraph",
+          "text": "This is the lesson to actually paint along with, not just read. Everything else in this course is refinement — this is the whole landscape, built in three big decisions: sky, mountain, water. Watch the demo below once all the way through, then step through it a second time on your own canvas, matching each stage before moving to the next."
+        },
+        {
+          "type": "heading",
+          "text": "Order Matters: Back to Front, Big to Small"
+        },
+        {
+          "type": "paragraph",
+          "text": "Sky first, always — it's the backdrop everything else sits in front of, and painting it first means the mountain and water can blend into its still-wet edges instead of the other way around. Mountain second, because it's a mid-sized shape that needs the sky settled behind it but doesn't need any of the small details yet. Water last, because it's mostly just a color and a soft reflection of what you already painted above it."
+        },
+        {
+          "type": "heading",
+          "text": "The Reflection Is Not a Copy"
+        },
+        {
+          "type": "paragraph",
+          "text": "A beginner's instinct is to paint the water's reflection as a precise, mirrored duplicate of the mountain. Real reflections are softer, simpler, and a little compressed — water movement blurs detail that solid ground holds onto. Paint the reflection looser and quicker than the mountain itself, with fewer strokes, and it will read as correct even though it isn't a precise copy. Looser is more accurate here, not less."
+        },
+        {
+          "type": "bulletList",
+          "items": [
+            "Sky, then mountain, then water — always in that order, back to front.",
+            "Each new shape should touch the still-wet edge of what's behind it, so they blend a little at the seam.",
+            "A mountain silhouette is one ridge line plus a solid fill — it doesn't need internal detail yet.",
+            "The reflection should take you a third of the time the mountain did — loose and quick, not a careful copy."
+          ]
+        },
+        {
+          "type": "tip",
+          "text": "If you paint the mountain and don't like its shape, don't undo and start the sky over. Just paint the correction directly into the still-wet mountain color — that's the entire point of working wet-on-wet, and it's faster than starting over."
+        },
+        {
+          "type": "tip",
+          "text": "Zoom out and look at the whole canvas after each of the three big passes, not just while you're up close painting. Landscapes that look a little rough up close often look completely convincing from a normal viewing distance — that's expected, not a warning sign."
+        }
+      ]
+    },
+    {
+      "id": "happy-little-details",
+      "title": "Small Details, Added Last and Sparingly",
+      "summary": "A few confident marks — a tree line, a rock, a bird — go a long way once the big shapes are settled.",
+      "blocks": [
+        {
+          "type": "paragraph",
+          "text": "Once your sky, mountain, and water are down, the temptation is to keep adding — more trees, more texture, more everything. Resist most of that urge. A landscape built on three strong big shapes usually needs only a handful of small marks to feel complete, and over-adding detail is one of the fastest ways to make a confident piece look fussy."
+        },
+        {
+          "type": "heading",
+          "text": "Trees Are Suggestions, Not Portraits"
+        },
+        {
+          "type": "paragraph",
+          "text": "A tree line along the base of a mountain doesn't need individually painted leaves — a few small, varied dabs of dark green in a rough cluster reads as foliage from any normal viewing distance. Let your brush's texture do the work instead of trying to paint every leaf by hand. If it looks like a convincing suggestion of a tree up close, it will look like an actual tree once you zoom back out."
+        },
+        {
+          "type": "heading",
+          "text": "One Small Detail Earns Its Place; Three Compete"
+        },
+        {
+          "type": "paragraph",
+          "text": "A single small accent — a lone bird, a rock breaking the water's surface, a warm-lit window in a distant cabin — draws the eye and gives a landscape a focal point. Add two or three more small details competing for that same attention, and none of them read clearly anymore. Pick one small thing to be the detail that matters, and leave the rest of the piece as the big, calm shapes you already built."
+        },
+        {
+          "type": "bulletList",
+          "items": [
+            "Add small details last, only after the big sky/mountain/water shapes are fully settled.",
+            "A cluster of a few varied dabs reads as foliage — you don't need to paint individual leaves.",
+            "One small focal detail is usually enough; two or three competing details weaken all of them.",
+            "If you're unsure whether to add another detail, don't — a calmer piece is rarely the wrong call."
+          ]
+        },
+        {
+          "type": "tip",
+          "text": "Step away from the canvas — literally lock the tablet, look away for a minute — before deciding whether a piece needs more detail. Almost everyone adds less once they've had thirty seconds away from staring closely at their own work."
+        }
+      ]
+    },
+    {
+      "id": "knowing-when-to-stop",
+      "title": "Knowing When to Stop",
+      "summary": "The most underrated skill in wet-on-wet painting: finishing before you've painted past the good part.",
+      "blocks": [
+        {
+          "type": "paragraph",
+          "text": "Every painting has a point where it's genuinely done, and it's earlier than you'll expect the first several times you try this. Because wet-on-wet makes it so easy to keep adjusting — nothing's ever fully locked in while it's wet — the real skill isn't knowing how to paint. It's knowing when your hand should stop moving."
+        },
+        {
+          "type": "heading",
+          "text": "The Piece Usually Peaks Before You Think It Does"
+        },
+        {
+          "type": "paragraph",
+          "text": "There's a specific, recognizable moment in most landscapes like this one: the big shapes are settled, one or two small details have earned their place, and the whole thing reads as calm and intentional. That's the peak. Everything painted after that point is usually either invisible at normal viewing distance or, worse, actively muddies something that was already working."
+        },
+        {
+          "type": "paragraph",
+          "text": "This isn't about rushing or settling for less than your best. It's the opposite — trusting that the loose, confident big shapes you built are already good, and that the biggest risk left in the painting is you, second-guessing something that didn't need fixing. Every course in this app will ask you to keep working at something. This is the one lesson that's allowed to just say: put the stylus down. You're done."
+        },
+        {
+          "type": "bulletList",
+          "items": [
+            "Big shapes settled + one small focal detail is usually a complete, finished piece.",
+            "If you're adding a mark and can't say what problem it's solving, that's a sign to stop.",
+            "Muddiness in a wet-on-wet piece almost always comes from working past the finishing point, not from an early mistake.",
+            "'Good enough and calm' beats 'technically more detailed but muddy' nearly every time in this style."
+          ]
+        },
+        {
+          "type": "tip",
+          "text": "Genuinely useful trick: before your next stroke, ask 'does this piece need it, or do I just feel like I should still be working?' Those are different questions, and only the first one should decide whether you keep going."
+        }
+      ]
+    }
+  ]
+}

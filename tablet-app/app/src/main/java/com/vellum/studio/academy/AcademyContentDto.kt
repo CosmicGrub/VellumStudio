@@ -5,20 +5,25 @@ import kotlinx.serialization.Serializable
 
 /**
  * On-disk (JSON, bundled under `assets/academy/`) shape for one [Course]'s static content --
- * title/summary/body text and tip callouts. [AcademyContentLoader] parses, validates, and converts
- * this into the exact same [Course]/[Lesson]/[LessonBlock] domain model every hand-authored
- * `CourseXxx.kt` object builds directly, so nothing downstream of that conversion (AcademyLibrary,
- * AcademyScreen, CourseDetailScreen, LessonScreen, AcademyProgressRepository, DemoPlayer) needs to
- * know or care whether a given course came from a JSON file or a Kotlin object literal.
+ * title/summary/body text, tip callouts, and now (as of schema version 1's [LessonBlockDto.Diagram]
+ * case) declarative diagrams too. [AcademyContentLoader] parses, validates, and converts this into
+ * the exact same [Course]/[Lesson]/[LessonBlock] domain model every hand-authored `CourseXxx.kt`
+ * object builds directly, so nothing downstream of that conversion (AcademyLibrary, AcademyScreen,
+ * CourseDetailScreen, LessonScreen, AcademyProgressRepository, DemoPlayer) needs to know or care
+ * whether a given course came from a JSON file or a Kotlin object literal.
  *
- * Deliberately narrower than the full [LessonBlock] sealed hierarchy: [LessonBlock.Diagram] (a
- * `(Canvas, Int) -> Unit` drawing closure) and [LessonDemo] (real [android.graphics.Path] data fed
- * through the app's actual brush-rendering pipeline -- see DemoPlayer) are genuine CODE, not
- * authorable content, so there's no JSON shape for either one here on purpose. A course that needs
- * a hand-drawn diagram or a flagship playback demo stays a hand-authored `CourseXxx.kt` object,
- * same as today -- this format only covers the lessons (or the parts of a lesson) that are pure
- * text plus the occasional bundled reference image, which is most of what a course actually is.
+ * As of schema version 1's [LessonContentDto.demo] field, this format also covers [LessonDemo]
+ * (real [android.graphics.Path] data fed through the app's actual brush-rendering pipeline -- see
+ * DemoPlayer): a demo is a small, fixed vocabulary too (a list of stages, each a caption plus
+ * strokes, each stroke a brushId/color/sizeMultiplier plus a path built from the same
+ * moveTo/lineTo/quadTo/cubicTo [PathCommandDto] vocabulary [LessonBlockDto.Diagram] already uses)
+ * -- see [DemoSpecDto] for the shape and [DemoSpecBuilder] for how it becomes a real [LessonDemo].
+ * Unlike [LessonBlockDto.Diagram] (a lazy `(Canvas, Int) -> Unit` closure), [LessonDemo] is eager,
+ * already-real [android.graphics.Path] data, so [DemoSpecBuilder] -- unlike [DiagramRenderer] --
+ * genuinely needs Android graphics the moment it runs; see that object's own doc for what that
+ * means for testing.
  *
+
  * [schemaVersion] exists from day one, the same reasoning as [ProjectMeta.schemaVersion] in
  * model/Project.kt: the day this shape needs to change, every already-authored JSON file is either
  * migrated or explicitly re-versioned by [AcademyContentLoader], never silently misread by a loader
@@ -43,6 +48,8 @@ data class LessonContentDto(
     val title: String,
     val summary: String,
     val blocks: List<LessonBlockDto> = emptyList(),
+    /** See [DemoSpecDto] for the shape and [DemoSpecBuilder] for how it becomes a real [LessonDemo]. */
+    val demo: DemoSpecDto? = null,
 )
 
 /**
@@ -75,5 +82,13 @@ sealed class LessonBlockDto {
         val caption: String,
         val assetPath: String,
         val attribution: String,
+    ) : LessonBlockDto()
+
+    /** See [DiagramOpDto] for the drawing-op vocabulary and [DiagramRenderer] for how [ops] becomes a real closure. */
+    @Serializable
+    @SerialName("diagram")
+    data class Diagram(
+        val caption: String,
+        val ops: List<DiagramOpDto> = emptyList(),
     ) : LessonBlockDto()
 }

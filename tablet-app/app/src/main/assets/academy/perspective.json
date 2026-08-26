@@ -1,0 +1,516 @@
+{
+  "schemaVersion": 1,
+  "id": "perspective",
+  "title": "Perspective Basics",
+  "instructorId": "rowan",
+  "description": "Builds on Drawing Foundations. Learn why perspective works, how to use one and two vanishing points to make boxes and buildings feel solid, how eye level changes what a drawing shows, and how to apply the same logic to everyday objects, not just architecture.",
+  "lessons": [
+    {
+      "id": "what-perspective-solves",
+      "title": "What Perspective Actually Solves",
+      "summary": "Understand the problem perspective fixes, so it stops feeling like abstract math.",
+      "blocks": [
+        {
+          "type": "paragraph",
+          "text": "You've probably drawn a road, a hallway, or a row of fence posts and had it come out looking flat and wrong, even though every individual shape seemed fine. That's not a shape problem — it's a perspective problem. Perspective is just the set of rules for how things appear to shrink and lean as they get farther from you. Once you see the problem it's solving, the 'rules' stop feeling like arbitrary math and start feeling like common sense you already half-know from looking at the world your whole life."
+        },
+        {
+          "type": "heading",
+          "text": "The Problem: Things Get Smaller and Lines Converge"
+        },
+        {
+          "type": "paragraph",
+          "text": "Stand in the middle of a long hallway and look down it. The walls on either side aren't actually getting closer together — they're parallel, the same distance apart the whole way down. But visually, they appear to lean inward and meet somewhere far in the distance. That apparent meeting point is the whole secret behind perspective. Objects farther away look smaller, and parallel lines receding into the distance look like they're converging toward a single point, even though in reality they never touch."
+        },
+        {
+          "type": "heading",
+          "text": "A Tool You Look Up, Not Memorize Under Pressure"
+        },
+        {
+          "type": "paragraph",
+          "text": "Here's some real relief: you do not need to have perspective rules memorized cold, ready to recite on demand. Perspective is a tool, like a formula you look up when you need it, not a test you have to pass from memory. Even experienced artists sketch out a horizon line and vanishing points as a guide before drawing something in perspective — they're not eyeballing it from pure memorized instinct. Treat the next few lessons as 'here's where to find the tool when you need it,' not 'here's something you must have memorized by Friday.'"
+        },
+        {
+          "type": "bulletList",
+          "items": [
+            "A road, hallway, or railroad track that needs to feel like it goes somewhere",
+            "A room or building where you want walls and furniture to feel solid, not paper-flat",
+            "Any scene with more than one object at clearly different distances from the viewer",
+            "A box, table, or book drawn at an angle rather than straight-on"
+          ]
+        },
+        {
+          "type": "tip",
+          "text": "If a drawing feels 'off' but you can't say why, check whether things that should look smaller with distance are actually the same size on the page. Our brains are extremely sensitive to this — even a small size mismatch reads as 'something's wrong here' before you consciously know what it is."
+        },
+        {
+          "type": "tip",
+          "text": "You don't need perspective for everything. A straight-on portrait, a flat pattern, or a stylized flat illustration might not need any of this. Perspective is a tool for a specific problem — depth and distance — not a requirement for every drawing you'll ever make."
+        }
+      ]
+    },
+    {
+      "id": "one-point-perspective",
+      "title": "One-Point Perspective",
+      "summary": "Use a horizon line and a single vanishing point to make a box or hallway recede convincingly.",
+      "blocks": [
+        {
+          "type": "paragraph",
+          "text": "One-point perspective is the simplest version of the trick, and it's exactly what you use for a hallway, a road, or a train track heading straight away from you. Everything you need boils down to two marks on the page: a horizon line and one vanishing point. From there, construction is mostly just connecting dots."
+        },
+        {
+          "type": "heading",
+          "text": "The Horizon Line and the Vanishing Point"
+        },
+        {
+          "type": "paragraph",
+          "text": "The horizon line represents your eye level — an imaginary flat line stretching across your view, at the exact height your eyes are. The vanishing point (often just written 'VP') is a single point somewhere on that horizon line, and it represents the spot infinitely far away where parallel lines receding from you appear to meet. In one-point perspective, every line that's heading 'away from you' in the scene — the edges of a hallway, the sides of a road — points toward that one single VP."
+        },
+        {
+          "type": "heading",
+          "text": "Drawing a Box That Recedes to the Vanishing Point"
+        },
+        {
+          "type": "paragraph",
+          "text": "Start by drawing your horizon line and marking one vanishing point somewhere on it. Draw a simple square or rectangle below (or above) the horizon line — that's the front face of your box, the part closest to you. Now draw a light guideline from each of the four corners of that square back to the vanishing point. Pick a spot along those guidelines to mark the back face of the box, and connect those points into a smaller rectangle. Ignore the extra guideline past the back face, and you've got a box that convincingly recedes into the distance."
+        },
+        {
+          "type": "bulletList",
+          "items": [
+            "Draw a horizon line roughly a third of the way up your canvas, and one vanishing point on it",
+            "Draw a hallway: two vertical lines for the side walls near the bottom corners of the canvas, both aimed toward the VP",
+            "Add a rectangle partway down each guideline for doorways along the hallway",
+            "Try the same setup as a straight road instead, with a few evenly-spaced fence posts, each one shorter than the last as it nears the VP"
+          ]
+        },
+        {
+          "type": "diagram",
+          "caption": "A horizon line, one vanishing point, and a box built from it",
+          "ops": [
+            {
+              "type": "line",
+              "x1": 0.0,
+              "y1": 0.38,
+              "x2": 1.0,
+              "y2": 0.38,
+              "color": "#787878",
+              "strokeWidth": 0.006
+            },
+            {
+              "type": "circle",
+              "cx": 0.5,
+              "cy": 0.38,
+              "r": 0.01,
+              "fillColor": "#C85A3C"
+            },
+            {
+              "type": "text",
+              "x": 0.5,
+              "y": 0.355,
+              "text": "VP",
+              "color": "#5A5A5A",
+              "textSize": 0.04,
+              "align": "center"
+            },
+            {
+              "type": "line",
+              "x1": 0.22,
+              "y1": 0.55,
+              "x2": 0.5,
+              "y2": 0.38,
+              "color": "#A0A0A0",
+              "strokeWidth": 0.005,
+              "dash": [
+                0.018,
+                0.014
+              ]
+            },
+            {
+              "type": "line",
+              "x1": 0.46,
+              "y1": 0.55,
+              "x2": 0.5,
+              "y2": 0.38,
+              "color": "#A0A0A0",
+              "strokeWidth": 0.005,
+              "dash": [
+                0.018,
+                0.014
+              ]
+            },
+            {
+              "type": "line",
+              "x1": 0.22,
+              "y1": 0.8,
+              "x2": 0.5,
+              "y2": 0.38,
+              "color": "#A0A0A0",
+              "strokeWidth": 0.005,
+              "dash": [
+                0.018,
+                0.014
+              ]
+            },
+            {
+              "type": "line",
+              "x1": 0.46,
+              "y1": 0.8,
+              "x2": 0.5,
+              "y2": 0.38,
+              "color": "#A0A0A0",
+              "strokeWidth": 0.005,
+              "dash": [
+                0.018,
+                0.014
+              ]
+            },
+            {
+              "type": "rect",
+              "left": 0.346,
+              "top": 0.4735,
+              "right": 0.478,
+              "bottom": 0.611,
+              "fillColor": "#E1E1E1",
+              "strokeColor": "#3C3C3C",
+              "strokeWidth": 0.008
+            },
+            {
+              "type": "rect",
+              "left": 0.22,
+              "top": 0.55,
+              "right": 0.46,
+              "bottom": 0.8,
+              "fillColor": "#E1E1E1",
+              "strokeColor": "#3C3C3C",
+              "strokeWidth": 0.008
+            },
+            {
+              "type": "text",
+              "x": 0.34,
+              "y": 0.86,
+              "text": "box receding to VP",
+              "color": "#5A5A5A",
+              "textSize": 0.04,
+              "align": "center"
+            }
+          ]
+        },
+        {
+          "type": "tip",
+          "text": "If your receding lines look like they're going to totally different places instead of one shared point, draw the vanishing point first and darker than everything else, then draw every guideline starting from your shape and ending exactly on that dot. It's much easier to hit one visible target than to eyeball several lines into agreement."
+        },
+        {
+          "type": "tip",
+          "text": "Keep your first guideline construction lines very light — you'll be erasing or covering most of them once the box shape is settled. Don't worry about neatness at this stage; the guidelines are scaffolding, not the finished drawing."
+        }
+      ]
+    },
+    {
+      "id": "two-point-perspective",
+      "title": "Two-Point Perspective",
+      "summary": "Add a second vanishing point to draw a box corner-first, the way most everyday objects actually appear.",
+      "blocks": [
+        {
+          "type": "paragraph",
+          "text": "Look around any room you're in and you'll notice most objects aren't lined up straight-on with you — you're usually seeing a corner first, with two sides receding away at angles. That's two-point perspective, and it's the perspective you'll actually use most often, because it's how furniture, buildings, and boxes usually sit relative to how we look at them."
+        },
+        {
+          "type": "heading",
+          "text": "Two Vanishing Points on the Same Horizon Line"
+        },
+        {
+          "type": "paragraph",
+          "text": "Two-point perspective works the same way as one-point, except now there are two vanishing points sitting on the horizon line instead of one, usually spaced pretty far apart — often even past the edges of your canvas. One set of receding lines heads toward the left VP, and a different set heads toward the right VP, while the only truly vertical lines in the whole drawing are the ones running straight up and down."
+        },
+        {
+          "type": "heading",
+          "text": "Building a Box Corner-First"
+        },
+        {
+          "type": "paragraph",
+          "text": "Start with your horizon line and two vanishing points, one on each side. Draw a single vertical line somewhere between them — this is the nearest corner of your box, the edge closest to you. From the top and bottom of that line, draw light guidelines heading to both vanishing points. Pick a point along each guideline to mark where the box's side edges will be, and draw a vertical line at each of those points. Connect the tops and bottoms back toward the vanishing points to finish the two visible side faces, and you've got a box sitting corner-first, exactly like a building or a piece of furniture would look from an angle."
+        },
+        {
+          "type": "bulletList",
+          "items": [
+            "The nearest vertical edge of the object is the only line you draw without referencing a vanishing point at all",
+            "Every other 'horizontal-ish' edge on the object should point at one of your two VPs, not be drawn freehand",
+            "Widely spaced vanishing points (even off-canvas) give a more natural, less distorted look than two VPs crammed close together",
+            "This is the perspective to reach for most often — it's the one everyday objects and buildings actually use"
+          ]
+        },
+        {
+          "type": "diagram",
+          "caption": "One vertical corner edge, two vanishing points, two receding faces",
+          "ops": [
+            {
+              "type": "line",
+              "x1": 0.0,
+              "y1": 0.34,
+              "x2": 1.0,
+              "y2": 0.34,
+              "color": "#787878",
+              "strokeWidth": 0.006
+            },
+            {
+              "type": "circle",
+              "cx": 0.06,
+              "cy": 0.34,
+              "r": 0.01,
+              "fillColor": "#C85A3C"
+            },
+            {
+              "type": "circle",
+              "cx": 0.94,
+              "cy": 0.34,
+              "r": 0.01,
+              "fillColor": "#C85A3C"
+            },
+            {
+              "type": "text",
+              "x": 0.06,
+              "y": 0.315,
+              "text": "VP1",
+              "color": "#5A5A5A",
+              "textSize": 0.038,
+              "align": "center"
+            },
+            {
+              "type": "text",
+              "x": 0.94,
+              "y": 0.315,
+              "text": "VP2",
+              "color": "#5A5A5A",
+              "textSize": 0.038,
+              "align": "center"
+            },
+            {
+              "type": "line",
+              "x1": 0.5,
+              "y1": 0.42,
+              "x2": 0.06,
+              "y2": 0.34,
+              "color": "#A0A0A0",
+              "strokeWidth": 0.005,
+              "dash": [
+                0.018,
+                0.014
+              ]
+            },
+            {
+              "type": "line",
+              "x1": 0.5,
+              "y1": 0.76,
+              "x2": 0.06,
+              "y2": 0.34,
+              "color": "#A0A0A0",
+              "strokeWidth": 0.005,
+              "dash": [
+                0.018,
+                0.014
+              ]
+            },
+            {
+              "type": "line",
+              "x1": 0.5,
+              "y1": 0.42,
+              "x2": 0.94,
+              "y2": 0.34,
+              "color": "#A0A0A0",
+              "strokeWidth": 0.005,
+              "dash": [
+                0.018,
+                0.014
+              ]
+            },
+            {
+              "type": "line",
+              "x1": 0.5,
+              "y1": 0.76,
+              "x2": 0.94,
+              "y2": 0.34,
+              "color": "#A0A0A0",
+              "strokeWidth": 0.005,
+              "dash": [
+                0.018,
+                0.014
+              ]
+            },
+            {
+              "type": "path",
+              "commands": [
+                {
+                  "type": "moveTo",
+                  "x": 0.5,
+                  "y": 0.42
+                },
+                {
+                  "type": "lineTo",
+                  "x": 0.258,
+                  "y": 0.376
+                },
+                {
+                  "type": "lineTo",
+                  "x": 0.258,
+                  "y": 0.529
+                },
+                {
+                  "type": "lineTo",
+                  "x": 0.5,
+                  "y": 0.76
+                }
+              ],
+              "closed": true,
+              "fillColor": "#BEBEBE",
+              "strokeColor": "#323232",
+              "strokeWidth": 0.01
+            },
+            {
+              "type": "path",
+              "commands": [
+                {
+                  "type": "moveTo",
+                  "x": 0.5,
+                  "y": 0.42
+                },
+                {
+                  "type": "lineTo",
+                  "x": 0.742,
+                  "y": 0.376
+                },
+                {
+                  "type": "lineTo",
+                  "x": 0.742,
+                  "y": 0.529
+                },
+                {
+                  "type": "lineTo",
+                  "x": 0.5,
+                  "y": 0.76
+                }
+              ],
+              "closed": true,
+              "fillColor": "#EBEBEB",
+              "strokeColor": "#323232",
+              "strokeWidth": 0.01
+            },
+            {
+              "type": "line",
+              "x1": 0.5,
+              "y1": 0.42,
+              "x2": 0.5,
+              "y2": 0.76,
+              "color": "#323232",
+              "strokeWidth": 0.01
+            },
+            {
+              "type": "text",
+              "x": 0.5,
+              "y": 0.83,
+              "text": "corner edge first, faces to each VP",
+              "color": "#5A5A5A",
+              "textSize": 0.038,
+              "align": "center"
+            }
+          ]
+        },
+        {
+          "type": "tip",
+          "text": "When your two vanishing points feel too close together, your box will look warped and overly dramatic, like a wide-angle lens. If that's not the effect you're going for, try placing your vanishing points farther apart — even off the edge of the canvas is normal and often looks more natural."
+        },
+        {
+          "type": "tip",
+          "text": "Shade one of the two side faces a little darker than the other, even roughly. It costs almost nothing and immediately makes the box look like a solid object catching light from one direction, instead of a flat diagram."
+        }
+      ]
+    },
+    {
+      "id": "eye-level-and-horizon",
+      "title": "Eye Level and the Horizon Line",
+      "summary": "Decide where your horizon line goes based on where your 'camera' is looking from.",
+      "blocks": [
+        {
+          "type": "paragraph",
+          "text": "Here's something that trips people up at first: the horizon line in a drawing isn't a fixed thing that always goes in the same spot. It always sits exactly at your eye level — wherever the viewer's eyes are — which means it moves depending on the vantage point you choose. Understanding this one idea gives you a lot of control over how dramatic or ordinary a drawing feels."
+        },
+        {
+          "type": "heading",
+          "text": "How Eye Level Changes What You See"
+        },
+        {
+          "type": "paragraph",
+          "text": "If you're standing and looking at a building, your eye level (and horizon line) is roughly at your own head height, so you see mostly the front of the building and a little bit of the roof or ground planes. Now imagine looking up at that same building from right at its base — your eye level, and the horizon line, drops way down near the bottom of the page, and suddenly you're seeing a lot more of the undersides of things. Look down at a table from above instead, and the horizon line rises up near the top of the page, revealing more of the tops of objects. Same subject, completely different feeling, just from moving the horizon line."
+        },
+        {
+          "type": "heading",
+          "text": "Worm's-Eye View vs Bird's-Eye View"
+        },
+        {
+          "type": "paragraph",
+          "text": "A worm's-eye view puts the horizon line very low on the page (or even below it), as if you're lying on the ground looking up — it makes subjects feel huge, towering, or dramatic, which is why it's a favorite for superhero art and monster reveals. A bird's-eye view puts the horizon line very high on the page (or above it), as if you're looking down from a height — it makes subjects feel small and distant, and gives a helpful 'map-like' overview of a scene. Most everyday drawings sit somewhere in between, with the horizon line roughly in the middle third of the page, matching normal standing eye level."
+        },
+        {
+          "type": "bulletList",
+          "items": [
+            "Where would the 'camera' actually be for this scene — standing, crouched, on a balcony, lying down?",
+            "Do I want this subject to feel big and imposing (horizon low) or small and distant (horizon high)?",
+            "Is the horizon line roughly at the eye height of the people or objects in my scene?",
+            "Am I staying consistent — every object in the same scene shares the same horizon line and eye level"
+          ]
+        },
+        {
+          "type": "tip",
+          "text": "A fast way to sanity-check your horizon line placement: find two objects that should be at roughly the same actual eye level as each other (two people standing near each other, say) and confirm they're both using the same horizon line to figure out their proportions. If one person's eyes are near the horizon and another isn't, that's usually the bug."
+        },
+        {
+          "type": "tip",
+          "text": "Don't stress about picking the 'perfect' eye level before you start. Sketch your horizon line loosely, rough in your scene, and if it's not giving you the feeling you wanted, move the horizon line and try again. It's just one line — moving it costs you nothing at the sketch stage."
+        }
+      ]
+    },
+    {
+      "id": "perspective-everyday-objects",
+      "title": "Perspective for Everyday Objects (Not Just Buildings)",
+      "summary": "Apply the exact same vanishing-point logic to a table, a book, or a cereal box.",
+      "blocks": [
+        {
+          "type": "paragraph",
+          "text": "It's easy to think of perspective as something for buildings and city streets, and then completely forget to use it on a table, a book, or a box of cereal sitting in a still life. But the truth is every object with straight edges plays by the exact same rules, at whatever smaller scale it happens to be. A cereal box on a table follows the same vanishing points as the building down the street."
+        },
+        {
+          "type": "heading",
+          "text": "The Same Rules, Smaller Scale"
+        },
+        {
+          "type": "paragraph",
+          "text": "A table is just a box with thin legs. An open book is two rectangles hinged along one edge, each receding slightly differently depending on how it's angled toward you. A cereal box is, well, a box. None of these need special new rules — they use the exact same horizon line and vanishing point construction you already practiced on buildings and hallways, just at a much smaller, closer scale, often with the vanishing points spaced closer together because the object itself is close to you."
+        },
+        {
+          "type": "heading",
+          "text": "One Scene, One Set of Vanishing Points"
+        },
+        {
+          "type": "paragraph",
+          "text": "Here's the practical shortcut that makes still-life and interior drawing much easier: every object with straight edges in the same scene, viewed from the same spot, shares the same horizon line and the same vanishing points. If you've already established where your VPs are for a table, then a book resting on that table, a box next to it, and the edge of a shelf in the background should all send their receding edges toward those same points. You don't need to re-derive perspective for every single object — you set it up once per scene and reuse it."
+        },
+        {
+          "type": "bulletList",
+          "items": [
+            "A table: draw it like a simple box with the legs as thin extensions straight down from each bottom corner",
+            "An open book: two rectangles sharing a hinge edge, each face tilted toward its own side",
+            "A cereal box: a straightforward two-point perspective box, just smaller and closer than a building",
+            "A shelf of a few stacked boxes: reuse one horizon line and one pair of vanishing points for every box on it"
+          ]
+        },
+        {
+          "type": "tip",
+          "text": "Curved objects — a mug, a bowl, a bottle — aren't left out either. Their round parts still follow the same ellipse-narrowing logic from the volume lesson, but their straight parts, like a book resting next to them, still need to agree with the scene's vanishing points. Mixing curved and straight objects in one scene is common; just keep both sets of rules working together instead of picking one and ignoring the other."
+        },
+        {
+          "type": "tip",
+          "text": "When in doubt on a busy scene, pick the one object you're most confident about, nail its perspective first, and then check every other object against it rather than solving them all independently. One solid anchor makes the rest of the scene much easier to get right."
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,399 @@
+{
+  "schemaVersion": 1,
+  "id": "graffiti-lettering-style",
+  "title": "Graffiti Lettering & Style",
+  "instructorId": "kai",
+  "description": "Tag anatomy, the real construction order a piece is built in, and the app's dedicated graffiti brush suite — from your first bubble letter to wildstyle connections and texture.",
+  "lessons": [
+    {
+      "id": "letterform-foundation",
+      "title": "The Letterform Underneath",
+      "summary": "Every tag, no matter how wild it looks, is a legible letter skeleton with style added on top — not the other way around.",
+      "blocks": [
+        {
+          "type": "paragraph",
+          "text": "Here's the thing almost every beginner gets backwards: the wild, tangled, almost-unreadable pieces you've seen aren't drawn by starting wild. They start as a completely legible letter, written out plainly, and the style — the flares, the connections, the exaggerated curves — gets built on top of that legible skeleton afterward. Skip the skeleton and you don't get wildstyle, you get scribbles that happen to be in spray-can colors."
+        },
+        {
+          "type": "heading",
+          "text": "Why Letters Come First, Every Time"
+        },
+        {
+          "type": "paragraph",
+          "text": "A piece that reads as confident and intentional, even at a glance, has real letter structure holding it together underneath the style. That's not a purity rule for its own sake — it's the actual mechanical reason a good piece looks controlled and a bad one looks chaotic. Every lesson in this course builds in that order: legible letters first, style decisions after, never the reverse."
+        },
+        {
+          "type": "heading",
+          "text": "The Four Layers of a Piece"
+        },
+        {
+          "type": "paragraph",
+          "text": "Nearly every finished piece, from a simple throw-up to a complex wildstyle burner, is built in the same four passes: a light pencil sketch to place the letters, a bold outline that locks in the final shape, a fill that gives it color, and highlights plus texture that make it pop off the wall. We'll go through each of those passes properly over this course, and by the end you'll have real muscle memory for the order."
+        },
+        {
+          "type": "bulletList",
+          "items": [
+            "Sketch: loose pencil, just placing where each letter goes — this is the only stage where 'messy' is fine.",
+            "Outline: a bold, confident, closed line that locks in the letter's final shape — no more changes after this.",
+            "Fill: color inside the locked outline — flat, gradient, or textured, your call.",
+            "Highlight + texture: the smaller details — a shine line, a drip, a fade — that make a flat fill read as a real piece."
+          ]
+        },
+        {
+          "type": "tip",
+          "text": "Before you touch a 'real' brush, write your own name in plain block letters with a regular Pencil brush, nothing fancy. If you can't read your own name back clearly at that stage, no amount of graffiti styling on top will fix it — go back and fix the letters first."
+        }
+      ]
+    },
+    {
+      "id": "bubble-letters-throw-up",
+      "title": "Bubble Letters: Your First Throw-Up",
+      "summary": "The classic rounded, easy-to-read style — and the hands-on core of this course.",
+      "blocks": [
+        {
+          "type": "paragraph",
+          "text": "Bubble letters — big, round, friendly-looking forms — are where almost everyone starts, and for good reason: they're forgiving to draw, instantly readable, and they teach the exact four-layer construction order every more advanced style still uses. Watch the demo below, then build your own letter the same way."
+        },
+        {
+          "type": "heading",
+          "text": "Round Everything, On Purpose"
+        },
+        {
+          "type": "paragraph",
+          "text": "The whole visual identity of a bubble letter comes from rounding what would normally be a sharp corner in a regular typeface. A capital 'A' loses its pointed peak and gains a rounded dome; a straight vertical stroke gets a gentle outward curve instead of staying perfectly straight. None of this is random — every curve still has to trace back to a legible letter, just softened."
+        },
+        {
+          "type": "heading",
+          "text": "The Fat Cap Is Doing Real Work Here"
+        },
+        {
+          "type": "paragraph",
+          "text": "This app's Fat Cap brush is deliberately built for this exact moment: a bold, steady-width line that barely reacts to pressure, so your outline stays confident and consistent instead of wobbling thin-to-thick like a sketching pencil would. Once you're happy with an outline, that shape is locked — the fill and highlight stages that come after live inside it, not on top of changing it."
+        },
+        {
+          "type": "bulletList",
+          "items": [
+            "Sketch the letter's skeleton loosely first, with Pencil — this stage is disposable.",
+            "Trace a bold, rounded outline over it with Fat Cap — this is the stage that's actually final.",
+            "Fill inside the locked outline with Spray Can — let its grainy texture show, don't fight it.",
+            "Add one small highlight stroke with a light color to suggest shine — a little goes a long way."
+          ]
+        },
+        {
+          "type": "tip",
+          "text": "If your outline and fill don't quite line up at the edges, that's not a mistake to panic over — a slightly imperfect fill edge is part of the hand-painted look. Real spray-painted pieces are never pixel-perfect either."
+        },
+        {
+          "type": "tip",
+          "text": "Try your own initial first, at a big size — bubble letters are far more forgiving when they have room to breathe. Shrinking a complex letterform down is a much harder second step, not a good place to start."
+        }
+      ],
+      "demo": {
+        "stages": [
+          {
+            "caption": "Sketch first — just a loose skeleton line placing where the letter goes. Messy is fine here.",
+            "strokes": [
+              {
+                "path": [
+                  {
+                    "type": "moveTo",
+                    "x": 0.3,
+                    "y": 0.7
+                  },
+                  {
+                    "type": "cubicTo",
+                    "control1X": 0.2,
+                    "control1Y": 0.7,
+                    "control2X": 0.18,
+                    "control2Y": 0.3,
+                    "x": 0.34,
+                    "y": 0.28
+                  },
+                  {
+                    "type": "cubicTo",
+                    "control1X": 0.5,
+                    "control1Y": 0.26,
+                    "control2X": 0.55,
+                    "control2Y": 0.45,
+                    "x": 0.42,
+                    "y": 0.5
+                  },
+                  {
+                    "type": "cubicTo",
+                    "control1X": 0.32,
+                    "control1Y": 0.54,
+                    "control2X": 0.55,
+                    "control2Y": 0.55,
+                    "x": 0.6,
+                    "y": 0.72
+                  }
+                ],
+                "brushId": "pencil",
+                "color": "#9A9A9A",
+                "sizeMultiplier": 0.8
+              }
+            ]
+          },
+          {
+            "caption": "Outline locks in the final shape with a bold, confident line — the Fat Cap brush, built exactly for this.",
+            "strokes": [
+              {
+                "path": [
+                  {
+                    "type": "moveTo",
+                    "x": 0.58,
+                    "y": 0.32
+                  },
+                  {
+                    "type": "cubicTo",
+                    "control1X": 0.5,
+                    "control1Y": 0.22,
+                    "control2X": 0.26,
+                    "control2Y": 0.24,
+                    "x": 0.22,
+                    "y": 0.38
+                  },
+                  {
+                    "type": "cubicTo",
+                    "control1X": 0.18,
+                    "control1Y": 0.52,
+                    "control2X": 0.34,
+                    "control2Y": 0.54,
+                    "x": 0.46,
+                    "y": 0.56
+                  },
+                  {
+                    "type": "cubicTo",
+                    "control1X": 0.6,
+                    "control1Y": 0.58,
+                    "control2X": 0.7,
+                    "control2Y": 0.64,
+                    "x": 0.64,
+                    "y": 0.76
+                  },
+                  {
+                    "type": "cubicTo",
+                    "control1X": 0.56,
+                    "control1Y": 0.86,
+                    "control2X": 0.32,
+                    "control2Y": 0.84,
+                    "x": 0.26,
+                    "y": 0.72
+                  }
+                ],
+                "brushId": "graffiti_fatcap",
+                "color": "#2A2A2A",
+                "sizeMultiplier": 1.3
+              }
+            ]
+          },
+          {
+            "caption": "Fill with the Spray Can — notice the grainy, textured edge, not a flat clean gradient.",
+            "strokes": [
+              {
+                "path": [
+                  {
+                    "type": "moveTo",
+                    "x": 0.58,
+                    "y": 0.32
+                  },
+                  {
+                    "type": "cubicTo",
+                    "control1X": 0.5,
+                    "control1Y": 0.22,
+                    "control2X": 0.26,
+                    "control2Y": 0.24,
+                    "x": 0.22,
+                    "y": 0.38
+                  },
+                  {
+                    "type": "cubicTo",
+                    "control1X": 0.18,
+                    "control1Y": 0.52,
+                    "control2X": 0.34,
+                    "control2Y": 0.54,
+                    "x": 0.46,
+                    "y": 0.56
+                  },
+                  {
+                    "type": "cubicTo",
+                    "control1X": 0.6,
+                    "control1Y": 0.58,
+                    "control2X": 0.7,
+                    "control2Y": 0.64,
+                    "x": 0.64,
+                    "y": 0.76
+                  },
+                  {
+                    "type": "cubicTo",
+                    "control1X": 0.56,
+                    "control1Y": 0.86,
+                    "control2X": 0.32,
+                    "control2Y": 0.84,
+                    "x": 0.26,
+                    "y": 0.72
+                  }
+                ],
+                "brushId": "graffiti_spray",
+                "color": "#DD3355",
+                "sizeMultiplier": 2.4
+              }
+            ]
+          },
+          {
+            "caption": "One small highlight stroke is enough to make the fill read as glossy instead of flat.",
+            "strokes": [
+              {
+                "path": [
+                  {
+                    "type": "moveTo",
+                    "x": 0.3,
+                    "y": 0.34
+                  },
+                  {
+                    "type": "quadTo",
+                    "controlX": 0.34,
+                    "controlY": 0.28,
+                    "x": 0.42,
+                    "y": 0.3
+                  }
+                ],
+                "brushId": "graffiti_wildstyle",
+                "color": "#FFFFFF",
+                "sizeMultiplier": 0.9
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "layers-outline-fill-highlight-shadow",
+      "title": "Building in Layers: Outline, Fill, Highlight, Shadow",
+      "summary": "The construction order that separates a piece that reads as intentional from one that reads as a mess.",
+      "blocks": [
+        {
+          "type": "paragraph",
+          "text": "You've already used this order once, on a single bubble letter. This lesson is about scaling it up to a full word or a real piece — and about the one extra layer that separates a good piece from a great one: the drop shadow."
+        },
+        {
+          "type": "heading",
+          "text": "Adding the Shadow Layer"
+        },
+        {
+          "type": "paragraph",
+          "text": "A drop shadow — a darker, offset echo of your outline, usually down and to one side — is what makes flat letters look like they're actually sitting in front of the wall instead of printed on it. Paint it before your fill and highlight, in a darker or complementary color, offset a consistent direction and distance for every letter in the word. Consistency in the offset direction matters more than the exact distance — mixed shadow directions is what makes a piece look wrong at a glance, even to someone who couldn't tell you why."
+        },
+        {
+          "type": "heading",
+          "text": "Keep Every Letter's Layers in the Same Order"
+        },
+        {
+          "type": "paragraph",
+          "text": "When you're working across a whole word, it's tempting to fully finish one letter — outline through highlight — before starting the next. Resist that. Do the outline pass across every letter first, then the shadow pass across every letter, then fill, then highlight. Working layer-by-layer across the whole word (rather than letter-by-letter) keeps the styling consistent, because you're making each decision — how bold the outline, how offset the shadow — once per layer instead of re-deciding it letter by letter and drifting."
+        },
+        {
+          "type": "bulletList",
+          "items": [
+            "Order: sketch -> outline -> shadow -> fill -> highlight, every time.",
+            "Shadow offset direction and distance should stay consistent across every letter in a word.",
+            "Work layer-by-layer across the whole piece, not letter-by-letter start to finish.",
+            "The Drip brush is a good texture accent for the shadow or fill layer, used sparingly."
+          ]
+        },
+        {
+          "type": "tip",
+          "text": "Toggle each finished letter's Line Art off and on (if you're layering the way this app supports) to check that your outline alone is still legible on its own, with no fill or shadow to lean on. If it isn't, the fix belongs in the outline, not in more decoration on top of it."
+        }
+      ]
+    },
+    {
+      "id": "wildstyle-breaking-rules-on-purpose",
+      "title": "Wildstyle: Breaking the Rules on Purpose",
+      "summary": "Once bubble letters and layering are second nature, connect letters, add arrows, and interlock — deliberately, not randomly.",
+      "blocks": [
+        {
+          "type": "paragraph",
+          "text": "Wildstyle looks like chaos and is actually the opposite: it's bubble-letter discipline pushed further, where connections, arrows, and interlocking strokes are added as deliberate choices on top of a still-legible skeleton. This is why the earlier lessons insisted on letters first — wildstyle is what that foundation earns you, not a shortcut around it."
+        },
+        {
+          "type": "heading",
+          "text": "Connections Between Letters"
+        },
+        {
+          "type": "paragraph",
+          "text": "The simplest wildstyle move is letting the end of one letter's outline flow directly into the start of the next, instead of leaving a gap. Use the Wildstyle Chisel brush for these connecting strokes — its strong tilt response gives you the thick-to-thin swing that makes a connection look like one confident gesture instead of two separate letters awkwardly touching."
+        },
+        {
+          "type": "heading",
+          "text": "Arrows Point Somewhere, Even When Abstract"
+        },
+        {
+          "type": "paragraph",
+          "text": "Arrows are one of wildstyle's most recognizable elements, and the beginner mistake is treating them as decoration you can stick anywhere. A good arrow visually leads the eye — into a letter, along a connection, toward the piece's focal point. Before adding one, ask what it's actually pointing at. If the answer is 'nothing in particular,' it's noise, not style."
+        },
+        {
+          "type": "bulletList",
+          "items": [
+            "Only start interlocking/connecting letters once your plain bubble letters are consistently legible.",
+            "Use Wildstyle Chisel for connecting strokes — its tilt-driven width swing is built for this.",
+            "Every arrow should visually lead somewhere specific, not just fill empty space.",
+            "When in doubt, a piece with fewer, more confident connections beats one with many uncertain ones."
+          ]
+        },
+        {
+          "type": "tip",
+          "text": "Sketch your connections and arrows in a light guide color first, the same way you sketch letters before outlining them. Wildstyle still gets a disposable planning stage — it's just a more complex plan."
+        }
+      ]
+    },
+    {
+      "id": "texture-drips-fades-stencils",
+      "title": "Texture and Grit: Drips, Spray Fade, and Stencils",
+      "summary": "Using the Drip and Stencil brushes deliberately, plus fading a Spray Can pass for depth.",
+      "blocks": [
+        {
+          "type": "paragraph",
+          "text": "The last layer on a real piece is texture — the small imperfections and effects that keep a flat, clean fill from looking like a printed sticker. This app's Drip and Stencil brushes exist specifically for this stage, and both work best used sparingly on top of an already-solid piece, not as a substitute for one."
+        },
+        {
+          "type": "heading",
+          "text": "Drips Read as Intentional Only in Small Doses"
+        },
+        {
+          "type": "paragraph",
+          "text": "A drip or two trailing down from the bottom of a fill reads as an intentional, grungy stylistic choice. Drips trailing off of every single letter reads as sloppy work, not style — the same 'less is more' rule that applies to small details in every other course applies here too. Pick one or two spots, usually near the bottom of the piece, and commit to those."
+        },
+        {
+          "type": "heading",
+          "text": "Spray Fade for Depth Without Extra Colors"
+        },
+        {
+          "type": "paragraph",
+          "text": "Because the Spray Can brush builds up opacity with repeated passes, you can fade a fill from solid to translucent within a single color just by spraying less at one end of a shape — heavier near the outline, lighter toward the center, for instance. This gives a sense of depth and light without needing to introduce a second or third fill color."
+        },
+        {
+          "type": "heading",
+          "text": "Stencil for Crisp Geometric Accents"
+        },
+        {
+          "type": "paragraph",
+          "text": "Where the Spray Can and Drip brushes are deliberately organic and a little unpredictable, the Stencil brush is the opposite on purpose — totally uniform, no pressure or tilt response at all, for the crisp geometric shapes (a star, a clean stripe, a background pattern) that contrast nicely against the piece's looser hand-painted elements."
+        },
+        {
+          "type": "bulletList",
+          "items": [
+            "Drips: one or two, near the bottom of the piece, not on every letter.",
+            "Spray fade: vary spray density within one pass instead of reaching for a second color.",
+            "Stencil: reach for it specifically when you want a crisp, uniform accent shape.",
+            "Texture is the last layer for a reason — add it once everything underneath is already working."
+          ]
+        },
+        {
+          "type": "tip",
+          "text": "Finish a whole piece without any texture pass first, and sit with it for a minute before deciding what (if anything) it actually needs. A surprising number of solid pieces need less texture than the instinct to keep adding suggests."
+        }
+      ]
+    }
+  ]
+}
