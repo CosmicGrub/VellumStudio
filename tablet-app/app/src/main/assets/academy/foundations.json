@@ -1,0 +1,769 @@
+{
+  "schemaVersion": 1,
+  "id": "foundations",
+  "title": "Drawing Foundations",
+  "instructorId": "rowan",
+  "description": "The absolute starting point — no experience assumed. Loosen up your hand, learn to see everyday objects as simple shapes, give those shapes weight and volume, keep your proportions in check without a ruler, and finish with the loose, fast sketching habit every artist warms up with.",
+  "lessons": [
+    {
+      "id": "line-confidence",
+      "title": "Loosen Up: Line Confidence",
+      "summary": "Warm up your hand and stop fearing the 'wrong' line.",
+      "blocks": [
+        {
+          "type": "paragraph",
+          "text": "If you've ever put your stylus down on a blank canvas and just... frozen, you're not broken and you're not alone. That blank white rectangle feels like it's daring you to mess it up. Here's the secret almost nobody tells beginners: professional artists don't draw one perfect, careful line. They draw a bunch of loose, fast, 'wrong' ones first, and the right line is usually hiding somewhere in that mess. This lesson is about giving yourself permission to make those messy lines on purpose, before you ever worry about getting something 'right.'"
+        },
+        {
+          "type": "heading",
+          "text": "Why Loose and Fast Beats Slow and Careful"
+        },
+        {
+          "type": "paragraph",
+          "text": "When you draw one line slowly, trying to make it perfect the first time, your hand tenses up and the line actually gets shakier — you're fighting yourself the whole way. When you draw the same line fast and loose, letting your arm swing through the motion, the line comes out smoother, even though it feels riskier. Professional artists lean on this constantly: they'll sketch a shape five or six times in fast, overlapping strokes, then pick the one line that reads best and build on that. Nobody sees the four 'wrong' lines underneath. That's the actual, unglamorous process."
+        },
+        {
+          "type": "heading",
+          "text": "Draw From Your Shoulder, Not Just Your Wrist"
+        },
+        {
+          "type": "paragraph",
+          "text": "Try this right now: draw a long line using only your wrist, keeping your arm still. Notice how it curves a little and runs out of steam partway through — your wrist only has so much range. Now draw a similar line but let the motion come from your shoulder, keeping your wrist and elbow fairly locked, like you're wiping a big window. That second line can travel much farther and stays smoother, because you're using one big, stable joint instead of a small, wobbly one. Wrist motion is great for short, careful strokes and tiny details. Shoulder motion is what you want for anything long — the edge of a table, a tree branch, the side of a face."
+        },
+        {
+          "type": "bulletList",
+          "items": [
+            "Straight lines: fill a row with quick horizontal lines, side to side, keeping the same length and spacing",
+            "Circles: draw the same circle shape 10 times in a row, overlapping each attempt slightly, without stopping to fix anything",
+            "Curves: draw a big lazy 'S' shape across the screen using your shoulder, and repeat it a dozen times",
+            "Vertical lines: same as the horizontal ones, but top to bottom, aiming for consistent spacing"
+          ]
+        },
+        {
+          "type": "tip",
+          "text": "If your straight lines keep curving in the same direction, that's not bad luck — it's almost always your wrist rotating slightly as it moves. Try rotating your tablet a little instead of forcing your hand into an awkward angle. Professionals turn the page or canvas constantly; you're allowed to too."
+        },
+        {
+          "type": "tip",
+          "text": "Set a timer for 3 minutes and just fill a blank layer with loose lines and circles before you start any 'real' drawing today. Don't judge them, don't erase them, don't try to make them pretty. This is a warm-up, the same as stretching before a run — the goal isn't a good drawing, it's a loose hand."
+        },
+        {
+          "type": "paragraph",
+          "text": "Nobody's first line of the day looks confident. The confidence comes from the tenth line, and the hundredth, not from getting it right on line one. Every artist you admire has thousands of ugly warm-up lines nobody ever sees."
+        },
+        {
+          "type": "masterworkReference",
+          "caption": "The Starry Night — every stroke you see here is a loose, confident mark, repeated hundreds of times, not one careful perfect line. That's line confidence at a masterwork level.",
+          "assetPath": "masterworks/starry_night_reference.jpg",
+          "attribution": "Vincent van Gogh, 1889 — public domain (Museum of Modern Art)"
+        }
+      ]
+    },
+    {
+      "id": "seeing-in-shapes",
+      "title": "Seeing in Basic Shapes",
+      "summary": "Learn to spot the circle, oval, box, or cylinder hiding inside anything you want to draw.",
+      "blocks": [
+        {
+          "type": "paragraph",
+          "text": "Here's something that changes how you see the entire world once you notice it: almost everything complicated is just a few simple shapes wearing a costume. A human head is basically an egg shape. A car is a rounded box. A tree trunk is a cylinder. Once you start looking for the basic shape underneath the surface details, drawing stops being about copying a confusing tangle of lines and starts being about building up from something you already know how to draw."
+        },
+        {
+          "type": "heading",
+          "text": "The Four Building Blocks"
+        },
+        {
+          "type": "paragraph",
+          "text": "Nearly everything you'll ever want to draw is built from some combination of four basic forms: circles and spheres (anything round, like a ball or an eye), ovals (elongated rounds, like an egg or a face), boxes (anything with flat sides and corners, like a book or a phone), and cylinders (a tube shape, like a soda can or an arm). You don't need to identify the 'correct' shape with total precision — you just need a rough, honest guess to start from. A slightly-wrong box is still a much better starting point than a blank page."
+        },
+        {
+          "type": "heading",
+          "text": "Real Objects, Simple Shapes"
+        },
+        {
+          "type": "paragraph",
+          "text": "Let's make this concrete. An apple is basically a sphere with a small dent at the top. A coffee mug is a cylinder with a handle stuck on the side. A book lying on a table is a box — just a flat one. A lampshade is a cone or a cylinder depending on the style. Once you draw that simple shape lightly first, all the real details — the mug's handle, the apple's stem, the book's pages — get added on top of a form that's already sitting correctly in space."
+        },
+        {
+          "type": "bulletList",
+          "items": [
+            "A doorknob → a small sphere on a short cylinder",
+            "A slice of pizza → a triangle (really a flattened cone)",
+            "A laptop, open → two connected boxes at an angle",
+            "A tree → an oval or cloud-like blob on top of a narrow cylinder"
+          ]
+        },
+        {
+          "type": "diagram",
+          "caption": "Three everyday objects, reduced to their basic shapes",
+          "ops": [
+            {
+              "type": "circle",
+              "cx": 0.166667,
+              "cy": 0.4,
+              "r": 0.15,
+              "fillColor": "#E1E1E1"
+            },
+            {
+              "type": "circle",
+              "cx": 0.166667,
+              "cy": 0.4,
+              "r": 0.15,
+              "strokeColor": "#464646",
+              "strokeWidth": 0.008
+            },
+            {
+              "type": "text",
+              "x": 0.166667,
+              "y": 0.68,
+              "text": "apple -> circle",
+              "color": "#5A5A5A",
+              "textSize": 0.042,
+              "align": "center"
+            },
+            {
+              "type": "oval",
+              "left": 0.4,
+              "top": 0.475,
+              "right": 0.6,
+              "bottom": 0.565,
+              "fillColor": "#E1E1E1"
+            },
+            {
+              "type": "line",
+              "x1": 0.4,
+              "y1": 0.28,
+              "x2": 0.4,
+              "y2": 0.52,
+              "color": "#464646",
+              "strokeWidth": 0.008
+            },
+            {
+              "type": "line",
+              "x1": 0.6,
+              "y1": 0.28,
+              "x2": 0.6,
+              "y2": 0.52,
+              "color": "#464646",
+              "strokeWidth": 0.008
+            },
+            {
+              "type": "oval",
+              "left": 0.4,
+              "top": 0.475,
+              "right": 0.6,
+              "bottom": 0.565,
+              "strokeColor": "#464646",
+              "strokeWidth": 0.008
+            },
+            {
+              "type": "oval",
+              "left": 0.4,
+              "top": 0.235,
+              "right": 0.6,
+              "bottom": 0.325,
+              "fillColor": "#E1E1E1"
+            },
+            {
+              "type": "oval",
+              "left": 0.4,
+              "top": 0.235,
+              "right": 0.6,
+              "bottom": 0.325,
+              "strokeColor": "#464646",
+              "strokeWidth": 0.008
+            },
+            {
+              "type": "text",
+              "x": 0.5,
+              "y": 0.68,
+              "text": "mug -> cylinder",
+              "color": "#5A5A5A",
+              "textSize": 0.042,
+              "align": "center"
+            },
+            {
+              "type": "rect",
+              "left": 0.743333,
+              "top": 0.34,
+              "right": 0.923333,
+              "bottom": 0.46,
+              "fillColor": "#E1E1E1"
+            },
+            {
+              "type": "rect",
+              "left": 0.743333,
+              "top": 0.34,
+              "right": 0.923333,
+              "bottom": 0.46,
+              "strokeColor": "#464646",
+              "strokeWidth": 0.008
+            },
+            {
+              "type": "path",
+              "closed": true,
+              "fillColor": "#E1E1E1",
+              "commands": [
+                {
+                  "type": "moveTo",
+                  "x": 0.743333,
+                  "y": 0.34
+                },
+                {
+                  "type": "lineTo",
+                  "x": 0.793333,
+                  "y": 0.29
+                },
+                {
+                  "type": "lineTo",
+                  "x": 0.973333,
+                  "y": 0.29
+                },
+                {
+                  "type": "lineTo",
+                  "x": 0.923333,
+                  "y": 0.34
+                }
+              ]
+            },
+            {
+              "type": "path",
+              "closed": true,
+              "strokeColor": "#464646",
+              "strokeWidth": 0.008,
+              "commands": [
+                {
+                  "type": "moveTo",
+                  "x": 0.743333,
+                  "y": 0.34
+                },
+                {
+                  "type": "lineTo",
+                  "x": 0.793333,
+                  "y": 0.29
+                },
+                {
+                  "type": "lineTo",
+                  "x": 0.973333,
+                  "y": 0.29
+                },
+                {
+                  "type": "lineTo",
+                  "x": 0.923333,
+                  "y": 0.34
+                }
+              ]
+            },
+            {
+              "type": "text",
+              "x": 0.833333,
+              "y": 0.68,
+              "text": "book -> box",
+              "color": "#5A5A5A",
+              "textSize": 0.042,
+              "align": "center"
+            }
+          ]
+        },
+        {
+          "type": "tip",
+          "text": "Right now, without drawing anything, look around the room and pick three objects near you. Say their basic shape out loud — 'that lamp is a cone on a cylinder,' 'that mug is a cylinder.' This takes ten seconds and trains the exact skill this whole lesson is about, before you've even picked up the stylus."
+        },
+        {
+          "type": "tip",
+          "text": "Before you move on, pick 3 or 4 objects around you right now and sketch just their basic shape, nothing else. No handles, no screens, no leaves — just the circle, box, or cylinder underneath. This feels almost too simple. That's the point."
+        }
+      ]
+    },
+    {
+      "id": "building-volume",
+      "title": "Building Volume: From Flat Shapes to Solid Forms",
+      "summary": "Learn the handful of tricks that make a flat circle read as a solid ball.",
+      "blocks": [
+        {
+          "type": "paragraph",
+          "text": "There's a big difference between a circle and a ball, even though they start as the exact same line. A circle just sits flat on the page, like a coin viewed straight-on. A ball has weight — it has a 'front' and a 'back' curving away from you, and it looks like you could reach out and pick it up. The difference isn't the outline — it's a few small additions that trick the eye into seeing depth on a flat screen. This lesson covers those tricks."
+        },
+        {
+          "type": "heading",
+          "text": "Turning a Circle Into a Sphere"
+        },
+        {
+          "type": "paragraph",
+          "text": "Draw a circle. Now, instead of leaving it as a flat outline, add one curved line running across it like a belt — think of it as the equator wrapping around a globe, tilted at whatever angle you want the sphere to be seen from. That single curved line is often enough for your brain to read the shape as round instead of flat. Add a bit of shading on the side away from your imagined light source, and the sphere effect gets even stronger. You don't need to master shading yet — just knowing that one curved line changes everything is the win for today."
+        },
+        {
+          "type": "heading",
+          "text": "Building a Cylinder From Two Ellipses and Two Lines"
+        },
+        {
+          "type": "paragraph",
+          "text": "A cylinder — think of a can, a cup, or an arm — breaks down into exactly four pieces: an ellipse on top, a matching ellipse on the bottom, and two straight lines connecting their edges. Draw the top ellipse first, then the bottom one directly below it (same width, same tilt), then connect the leftmost points and the rightmost points with two straight vertical lines. That's the whole construction. Once you're comfortable with it, you can draw a soda can, a candle, a leg, or a tree trunk using this exact same process."
+        },
+        {
+          "type": "bulletList",
+          "items": [
+            "Draw the top ellipse — flatter means you're viewing it more from the side",
+            "Draw the bottom ellipse the same width and tilt, positioned straight down from the top one",
+            "Connect the left edges of both ellipses with one straight line",
+            "Connect the right edges of both ellipses with one straight line"
+          ]
+        },
+        {
+          "type": "diagram",
+          "caption": "A flat circle becomes a sphere; two ellipses plus two lines become a cylinder",
+          "ops": [
+            {
+              "type": "circle",
+              "cx": 0.27,
+              "cy": 0.42,
+              "r": 0.17,
+              "fillColor": "#E1E1E1"
+            },
+            {
+              "type": "circle",
+              "cx": 0.27,
+              "cy": 0.42,
+              "r": 0.17,
+              "strokeColor": "#464646",
+              "strokeWidth": 0.008
+            },
+            {
+              "type": "oval",
+              "left": 0.1,
+              "top": 0.3656,
+              "right": 0.44,
+              "bottom": 0.4744,
+              "strokeColor": "#8C8C8C",
+              "strokeWidth": 0.006,
+              "dash": [
+                0.02,
+                0.015
+              ]
+            },
+            {
+              "type": "text",
+              "x": 0.27,
+              "y": 0.67,
+              "text": "circle -> sphere",
+              "color": "#5A5A5A",
+              "textSize": 0.04,
+              "align": "center"
+            },
+            {
+              "type": "oval",
+              "left": 0.62,
+              "top": 0.515,
+              "right": 0.84,
+              "bottom": 0.605,
+              "fillColor": "#E1E1E1"
+            },
+            {
+              "type": "line",
+              "x1": 0.62,
+              "y1": 0.26,
+              "x2": 0.62,
+              "y2": 0.56,
+              "color": "#464646",
+              "strokeWidth": 0.008
+            },
+            {
+              "type": "line",
+              "x1": 0.84,
+              "y1": 0.26,
+              "x2": 0.84,
+              "y2": 0.56,
+              "color": "#464646",
+              "strokeWidth": 0.008
+            },
+            {
+              "type": "oval",
+              "left": 0.62,
+              "top": 0.515,
+              "right": 0.84,
+              "bottom": 0.605,
+              "strokeColor": "#464646",
+              "strokeWidth": 0.008
+            },
+            {
+              "type": "oval",
+              "left": 0.62,
+              "top": 0.215,
+              "right": 0.84,
+              "bottom": 0.305,
+              "fillColor": "#E1E1E1"
+            },
+            {
+              "type": "oval",
+              "left": 0.62,
+              "top": 0.215,
+              "right": 0.84,
+              "bottom": 0.305,
+              "strokeColor": "#464646",
+              "strokeWidth": 0.008
+            },
+            {
+              "type": "text",
+              "x": 0.73,
+              "y": 0.7,
+              "text": "2 ellipses + 2 lines -> cylinder",
+              "color": "#5A5A5A",
+              "textSize": 0.04,
+              "align": "center"
+            }
+          ]
+        },
+        {
+          "type": "tip",
+          "text": "If your ellipses keep coming out as pointy lemon shapes instead of smooth ovals, slow down right at the two 'tips' of the curve — most people rush through those points because they feel like a finish line. Ease through them instead of stopping there, and the shape rounds out."
+        },
+        {
+          "type": "tip",
+          "text": "Here's a free depth trick with zero shading required: when one shape overlaps and covers part of another, your brain automatically reads the covering shape as closer to you. Draw two circles that overlap slightly and it instantly reads as two balls at different distances. Try adding one overlap to your next sketch and see how much more three-dimensional it feels."
+        }
+      ],
+      "demo": {
+        "stages": [
+          {
+            "caption": "Start with a plain circle.",
+            "strokes": [
+              {
+                "path": [
+                  {
+                    "type": "moveTo",
+                    "x": 0.47,
+                    "y": 0.42
+                  },
+                  {
+                    "type": "cubicTo",
+                    "control1X": 0.47,
+                    "control1Y": 0.513888,
+                    "control2X": 0.393888,
+                    "control2Y": 0.59,
+                    "x": 0.3,
+                    "y": 0.59
+                  },
+                  {
+                    "type": "cubicTo",
+                    "control1X": 0.206112,
+                    "control1Y": 0.59,
+                    "control2X": 0.13,
+                    "control2Y": 0.513888,
+                    "x": 0.13,
+                    "y": 0.42
+                  },
+                  {
+                    "type": "cubicTo",
+                    "control1X": 0.13,
+                    "control1Y": 0.326112,
+                    "control2X": 0.206112,
+                    "control2Y": 0.25,
+                    "x": 0.3,
+                    "y": 0.25
+                  },
+                  {
+                    "type": "cubicTo",
+                    "control1X": 0.393888,
+                    "control1Y": 0.25,
+                    "control2X": 0.47,
+                    "control2Y": 0.326112,
+                    "x": 0.47,
+                    "y": 0.42
+                  }
+                ],
+                "brushId": "fineliner",
+                "color": "#3A3A3A"
+              }
+            ]
+          },
+          {
+            "caption": "Add one curved line across it, like a belt — that alone reads as a sphere.",
+            "strokes": [
+              {
+                "path": [
+                  {
+                    "type": "moveTo",
+                    "x": 0.47,
+                    "y": 0.42
+                  },
+                  {
+                    "type": "cubicTo",
+                    "control1X": 0.47,
+                    "control1Y": 0.450044,
+                    "control2X": 0.393888,
+                    "control2Y": 0.4744,
+                    "x": 0.3,
+                    "y": 0.4744
+                  },
+                  {
+                    "type": "cubicTo",
+                    "control1X": 0.206112,
+                    "control1Y": 0.4744,
+                    "control2X": 0.13,
+                    "control2Y": 0.450044,
+                    "x": 0.13,
+                    "y": 0.42
+                  },
+                  {
+                    "type": "cubicTo",
+                    "control1X": 0.13,
+                    "control1Y": 0.389956,
+                    "control2X": 0.206112,
+                    "control2Y": 0.3656,
+                    "x": 0.3,
+                    "y": 0.3656
+                  },
+                  {
+                    "type": "cubicTo",
+                    "control1X": 0.393888,
+                    "control1Y": 0.3656,
+                    "control2X": 0.47,
+                    "control2Y": 0.389956,
+                    "x": 0.47,
+                    "y": 0.42
+                  }
+                ],
+                "brushId": "pencil",
+                "color": "#9A9A9A",
+                "sizeMultiplier": 0.8
+              }
+            ]
+          },
+          {
+            "caption": "Now a cylinder: the top ellipse, then a matching one below it.",
+            "strokes": [
+              {
+                "path": [
+                  {
+                    "type": "moveTo",
+                    "x": 0.83,
+                    "y": 0.26
+                  },
+                  {
+                    "type": "cubicTo",
+                    "control1X": 0.83,
+                    "control1Y": 0.284853,
+                    "control2X": 0.780751,
+                    "control2Y": 0.305,
+                    "x": 0.72,
+                    "y": 0.305
+                  },
+                  {
+                    "type": "cubicTo",
+                    "control1X": 0.659249,
+                    "control1Y": 0.305,
+                    "control2X": 0.61,
+                    "control2Y": 0.284853,
+                    "x": 0.61,
+                    "y": 0.26
+                  },
+                  {
+                    "type": "cubicTo",
+                    "control1X": 0.61,
+                    "control1Y": 0.235147,
+                    "control2X": 0.659249,
+                    "control2Y": 0.215,
+                    "x": 0.72,
+                    "y": 0.215
+                  },
+                  {
+                    "type": "cubicTo",
+                    "control1X": 0.780751,
+                    "control1Y": 0.215,
+                    "control2X": 0.83,
+                    "control2Y": 0.235147,
+                    "x": 0.83,
+                    "y": 0.26
+                  }
+                ],
+                "brushId": "fineliner",
+                "color": "#3A3A3A"
+              },
+              {
+                "path": [
+                  {
+                    "type": "moveTo",
+                    "x": 0.83,
+                    "y": 0.56
+                  },
+                  {
+                    "type": "cubicTo",
+                    "control1X": 0.83,
+                    "control1Y": 0.584853,
+                    "control2X": 0.780751,
+                    "control2Y": 0.605,
+                    "x": 0.72,
+                    "y": 0.605
+                  },
+                  {
+                    "type": "cubicTo",
+                    "control1X": 0.659249,
+                    "control1Y": 0.605,
+                    "control2X": 0.61,
+                    "control2Y": 0.584853,
+                    "x": 0.61,
+                    "y": 0.56
+                  },
+                  {
+                    "type": "cubicTo",
+                    "control1X": 0.61,
+                    "control1Y": 0.535147,
+                    "control2X": 0.659249,
+                    "control2Y": 0.515,
+                    "x": 0.72,
+                    "y": 0.515
+                  },
+                  {
+                    "type": "cubicTo",
+                    "control1X": 0.780751,
+                    "control1Y": 0.515,
+                    "control2X": 0.83,
+                    "control2Y": 0.535147,
+                    "x": 0.83,
+                    "y": 0.56
+                  }
+                ],
+                "brushId": "fineliner",
+                "color": "#3A3A3A"
+              }
+            ]
+          },
+          {
+            "caption": "Connect the left edges, then the right edges, with two straight lines.",
+            "strokes": [
+              {
+                "path": [
+                  {
+                    "type": "moveTo",
+                    "x": 0.61,
+                    "y": 0.26
+                  },
+                  {
+                    "type": "lineTo",
+                    "x": 0.61,
+                    "y": 0.56
+                  }
+                ],
+                "brushId": "fineliner",
+                "color": "#3A3A3A"
+              },
+              {
+                "path": [
+                  {
+                    "type": "moveTo",
+                    "x": 0.83,
+                    "y": 0.26
+                  },
+                  {
+                    "type": "lineTo",
+                    "x": 0.83,
+                    "y": 0.56
+                  }
+                ],
+                "brushId": "fineliner",
+                "color": "#3A3A3A"
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "proportions-without-ruler",
+      "title": "Proportions Without a Ruler",
+      "summary": "Use one shape as your measuring stick so nothing on the page comes out lopsided.",
+      "blocks": [
+        {
+          "type": "paragraph",
+          "text": "Ever draw the head of a person perfectly, then realize halfway down that there's no room left for the rest of the body? That's not a talent problem — it's a measuring problem, and it's probably the single most common mistake beginners make. The good news is you don't need a ruler or any special tool to fix it. You just need to pick one shape and use it as your 'unit' to measure everything else against."
+        },
+        {
+          "type": "heading",
+          "text": "The Pen-Length Trick (and Its Tablet Equivalent)"
+        },
+        {
+          "type": "paragraph",
+          "text": "Traditional artists hold a pencil out at arm's length, close one eye, and use the visible length of the pencil against their subject to compare sizes — 'this vase is about two pencil-lengths tall.' On a tablet you can do the same thing digitally: pick one shape you've already drawn, like the width of a head or the size of the nearest object, and treat it as your unit. Then ask, 'how many of these fit into the total height I'm drawing?' If a body is 'about seven heads tall,' you now have a simple, repeatable way to check your proportions as you go, instead of guessing and hoping."
+        },
+        {
+          "type": "heading",
+          "text": "The Classic Mistake: Too Big, Too Soon"
+        },
+        {
+          "type": "paragraph",
+          "text": "The single most common proportion mistake is drawing the first element — a head, the front edge of a building, the first flower in a bouquet — too large, because it's the only thing on the page and there's nothing to compare it to yet. By the time you get to the rest of the drawing, you've run out of space and everything else gets cramped or cut off. The fix is almost embarrassingly simple: before you commit to any detail, lightly sketch the overall size and boundary of the whole thing first, even if that outline is just a loose box or oval."
+        },
+        {
+          "type": "bulletList",
+          "items": [
+            "Lightly sketch a loose box or oval marking the outer edges of your whole subject, before drawing any detail",
+            "Pick one clear shape inside your subject to use as your measuring unit",
+            "Count roughly how many units tall and wide the whole subject is, and sanity-check that against your loose outline",
+            "Only once the big shapes and proportions feel right, start adding detail — details are the very last step, not the first"
+          ]
+        },
+        {
+          "type": "tip",
+          "text": "If you keep running out of room on the right or bottom of your canvas, you're probably starting too close to an edge. Leave a visible margin on all sides before you draw your first line — it costs you nothing and gives you room to be wrong."
+        },
+        {
+          "type": "tip",
+          "text": "Comparative measurement gets easier with practice, but even experienced artists still eyeball wrong sometimes — that's normal, not a sign you're doing it incorrectly. The habit that actually matters is checking and adjusting your loose guideline shapes before adding detail, not getting the guideline perfect on the first try."
+        },
+        {
+          "type": "paragraph",
+          "text": "None of this needs to be precise. A loose guideline box that's roughly the right proportions will save a drawing far more often than no guideline at all. You're not measuring for a blueprint — you're just giving yourself a rough map before you commit."
+        }
+      ]
+    },
+    {
+      "id": "gesture-drawing",
+      "title": "Gesture Drawing: Capturing the Feel, Not the Details",
+      "summary": "Quick, loose sketches that capture motion and energy before any detail exists.",
+      "blocks": [
+        {
+          "type": "paragraph",
+          "text": "Everything you've practiced so far has been about slowing down and looking carefully. Gesture drawing flips that completely: you're going to draw fast — 30 to 60 seconds per sketch — and the goal isn't accuracy at all, it's capturing the feel of a pose. No outlines, no details, no erasing. Just the energy of the shape moving across the page. This might be the most freeing exercise in this whole course, precisely because 'good' and 'bad' don't really apply here."
+        },
+        {
+          "type": "heading",
+          "text": "What Gesture Drawing Actually Captures"
+        },
+        {
+          "type": "paragraph",
+          "text": "A gesture drawing isn't a shrunk-down version of a finished drawing — it's a completely different kind of mark. Instead of tracing the outline of a pose, you're chasing the line of action: the single curve that best describes how the body (or object) is moving through space. Think of a person leaning to catch a ball — the gesture is that big diagonal lean, not the fingers or the shoelaces. You can always add detail later. What you can't add later is energy that wasn't there in the first 30 seconds."
+        },
+        {
+          "type": "heading",
+          "text": "Why Professionals Warm Up This Way"
+        },
+        {
+          "type": "paragraph",
+          "text": "Working artists use gesture drawing as a daily warm-up for a simple reason: it forces you to make quick decisions instead of getting stuck. When you only have 30 seconds, there's no time to second-guess a line or erase it — you just commit and move to the next one. That habit of committing without overthinking carries over into every other kind of drawing, including the slow, careful kind. It also keeps your hand loose, the same way lesson one's warm-up lines do, but applied to actual subjects instead of random scribbles."
+        },
+        {
+          "type": "bulletList",
+          "items": [
+            "Pick one simple pose — a photo of someone walking, reaching, or sitting works great, or even just imagine one",
+            "Set a timer for 45 seconds",
+            "Sketch just the line of action and the biggest shapes — no fingers, no facial features, no clothing folds",
+            "When the timer goes off, stop, even mid-line — that's part of the exercise",
+            "Repeat the same pose 5 times in a row, each in under a minute, and compare the 5 sketches side by side"
+          ]
+        },
+        {
+          "type": "tip",
+          "text": "When you compare your 5 quick sketches, don't look for which one is 'most accurate' — look for which one has the most energy or feels most alive. That's usually not the slowest, most careful one. It's often the third or fourth, once your hand has loosened up and stopped worrying."
+        },
+        {
+          "type": "tip",
+          "text": "If your gesture sketches keep turning into detailed drawings even though you set a short timer, try covering the timer or turning off the display while you draw. A lot of the 'sneaking in detail' habit is really just anxiety about the time running out, and removing the visible countdown often loosens people up more than the timer itself."
+        },
+        {
+          "type": "paragraph",
+          "text": "Gesture drawing feels uncomfortable at first because it asks you to stop chasing 'correct' and start chasing 'alive.' That trade is worth it. A wobbly, energetic gesture sketch usually says more about a pose than a slow, accurate one ever could."
+        }
+      ]
+    }
+  ]
+}
