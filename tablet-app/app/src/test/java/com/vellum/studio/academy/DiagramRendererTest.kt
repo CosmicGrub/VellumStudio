@@ -105,6 +105,55 @@ class DiagramRendererTest {
         assertEquals(Color.TRANSPARENT, bitmap.getPixel(5, 5)) // outside the rect entirely
     }
 
+    // --- oval -----------------------------------------------------------------------------------
+
+    @Test fun `a filled oval colors its interior and leaves the outside transparent`() {
+        val bitmap = renderToBitmap(
+            listOf(DiagramOpDto.Oval(left = 0.2f, top = 0.35f, right = 0.8f, bottom = 0.65f, fillColor = "#0000FF"))
+        )
+        assertEquals(Color.BLUE, bitmap.getPixel(50, 50)) // center of the ellipse
+        assertEquals(Color.TRANSPARENT, bitmap.getPixel(5, 5)) // outside the ellipse entirely
+    }
+
+    @Test fun `a stroke-only oval draws a ring, not a filled ellipse`() {
+        val bitmap = renderToBitmap(
+            listOf(DiagramOpDto.Oval(left = 0.2f, top = 0.35f, right = 0.8f, bottom = 0.65f, strokeColor = "#00AA00", strokeWidth = 0.04f))
+        )
+        assertEquals(Color.rgb(0, 170, 0), bitmap.getPixel(50, 35)) // on the top edge of the ellipse
+        assertEquals(Color.TRANSPARENT, bitmap.getPixel(50, 50)) // center: not filled
+    }
+
+    // --- arc ------------------------------------------------------------------------------------
+
+    @Test fun `a pie-slice arc (useCenter) fills its wedge and leaves the rest of the ellipse transparent`() {
+        val bitmap = renderToBitmap(
+            listOf(
+                DiagramOpDto.Arc(
+                    left = 0.2f, top = 0.2f, right = 0.8f, bottom = 0.8f,
+                    startAngle = 0f, sweepAngle = 90f, useCenter = true, fillColor = "#FF00FF",
+                )
+            )
+        )
+        // Inside the 0-90 degree wedge (down-and-right from center).
+        assertEquals(Color.rgb(0xFF, 0x00, 0xFF), bitmap.getPixel(65, 65))
+        // Outside that wedge but still inside the ellipse (up-and-left from center).
+        assertEquals(Color.TRANSPARENT, bitmap.getPixel(35, 35))
+    }
+
+    @Test fun `a stroke-only open arc (useCenter false) draws just the curved edge, not a pie slice`() {
+        val bitmap = renderToBitmap(
+            listOf(
+                DiagramOpDto.Arc(
+                    left = 0.2f, top = 0.2f, right = 0.8f, bottom = 0.8f,
+                    startAngle = 0f, sweepAngle = 90f, useCenter = false,
+                    strokeColor = "#FF00FF", strokeWidth = 0.04f,
+                )
+            )
+        )
+        // The center point is never touched by an open (non-useCenter) arc stroke.
+        assertEquals(Color.TRANSPARENT, bitmap.getPixel(50, 50))
+    }
+
     // --- text -----------------------------------------------------------------------------------
 
     @Test fun `text draws its color somewhere near its anchor point`() {

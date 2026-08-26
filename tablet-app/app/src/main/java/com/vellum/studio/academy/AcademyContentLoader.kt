@@ -202,6 +202,25 @@ object AcademyContentLoader {
                 requireValidAlpha(op.alpha)
                 requireValidDash(op.dash)
             }
+            is DiagramOpDto.Oval -> {
+                requireUnitRange(op.left, "left"); requireUnitRange(op.top, "top")
+                requireUnitRange(op.right, "right"); requireUnitRange(op.bottom, "bottom")
+                if (op.left >= op.right) fail("$label has left (${op.left}) >= right (${op.right})")
+                if (op.top >= op.bottom) fail("$label has top (${op.top}) >= bottom (${op.bottom})")
+                requireFillOrStroke(op.fillColor, op.strokeColor, op.strokeWidth)
+                requireValidAlpha(op.alpha)
+                requireValidDash(op.dash)
+            }
+            is DiagramOpDto.Arc -> {
+                requireUnitRange(op.left, "left"); requireUnitRange(op.top, "top")
+                requireUnitRange(op.right, "right"); requireUnitRange(op.bottom, "bottom")
+                if (op.left >= op.right) fail("$label has left (${op.left}) >= right (${op.right})")
+                if (op.top >= op.bottom) fail("$label has top (${op.top}) >= bottom (${op.bottom})")
+                if (op.sweepAngle == 0f) fail("$label has a zero sweepAngle")
+                requireFillOrStroke(op.fillColor, op.strokeColor, op.strokeWidth)
+                requireValidAlpha(op.alpha)
+                requireValidDash(op.dash)
+            }
             is DiagramOpDto.Text -> {
                 requireUnitRange(op.x, "x"); requireUnitRange(op.y, "y")
                 if (op.text.isBlank()) fail("$label (text) has blank text")

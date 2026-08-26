@@ -1,0 +1,599 @@
+{
+  "schemaVersion": 1,
+  "id": "color-theory",
+  "title": "Color Theory",
+  "instructorId": "marisol",
+  "description": "A practical introduction to hue, saturation, and value, and how to combine colors so a piece feels intentional instead of random.",
+  "lessons": [
+    {
+      "id": "hue-saturation-value",
+      "title": "Hue, Saturation, and Value - What You're Actually Adjusting",
+      "summary": "A plain-language guide to what the app's HSV color picker's three sliders actually control, and why value matters more than the other two for a drawing to read correctly.",
+      "blocks": [
+        {
+          "type": "paragraph",
+          "text": "Open the color picker in this app and you'll see three sliders, usually labeled H, S, and V. If you've ever dragged them around without really knowing what each one does, you're not alone - most people learn this by trial and error. Here's what's actually happening under each slider, in plain terms, and why one of the three matters more than the other two."
+        },
+        {
+          "type": "heading",
+          "text": "Hue: Which Color Family"
+        },
+        {
+          "type": "paragraph",
+          "text": "Hue is the slider that answers 'what color is this, roughly' - red, orange, yellow, green, blue, purple, and everywhere between. It's the one that matches what most people casually mean when they say 'color.' Slide it and you travel around the color wheel from the next lesson, cycling through every family of color without changing how bright or how pure any of them are."
+        },
+        {
+          "type": "heading",
+          "text": "Saturation: How Pure or How Muted"
+        },
+        {
+          "type": "paragraph",
+          "text": "Saturation controls how intense or how washed-out a color looks. High saturation is vivid and pure - think traffic-cone orange or fire-engine red. Low saturation pulls that same hue toward gray, giving you a dusty, muted, more 'realistic' version of the same color family. Neither end is better - vivid colors grab attention, muted colors feel calmer and more natural, and most good pieces use a mix of both."
+        },
+        {
+          "type": "heading",
+          "text": "Value: How Light or How Dark"
+        },
+        {
+          "type": "paragraph",
+          "text": "Value controls how light or dark a color is, all the way from near-white to near-black. It's the slider most people underestimate, and it's also the most important one. If you could strip all the color out of your drawing and look at it in plain grayscale, value is the only thing left - and if the drawing doesn't read clearly in grayscale, it usually won't read clearly in color either, no matter how nicely you've chosen your hues."
+        },
+        {
+          "type": "bulletList",
+          "items": [
+            "Hue = which color family (red, blue, green, and so on).",
+            "Saturation = how pure and vivid versus how muted and grayed-out.",
+            "Value = how light versus how dark.",
+            "Value is doing most of the work that makes a drawing look three-dimensional and easy to read - it's the same value logic from the Shading & Light course, just applied through color instead of gray pencil.",
+            "A quick gut-check: if you're not sure a color choice is working, try imagining the drawing in black and white. If the shapes are still clear, the value is doing its job."
+          ]
+        },
+        {
+          "type": "tip",
+          "text": "When you're stuck on a color decision, try adjusting value first and hue last. A slightly off hue with the right value will usually still read fine. The right hue with the wrong value often won't."
+        },
+        {
+          "type": "tip",
+          "text": "It's worth spending five minutes just dragging each slider on its own with nothing else changing, so you can watch exactly what it does in isolation. That little bit of play will teach you more than a written description ever could."
+        }
+      ]
+    },
+    {
+      "id": "color-wheel",
+      "title": "The Color Wheel and Why It's Useful",
+      "summary": "Primary, secondary, and tertiary colors laid out on a wheel, as a practical tool for picking colors that actually work together rather than as trivia to memorize.",
+      "blocks": [
+        {
+          "type": "paragraph",
+          "text": "You've probably seen a color wheel before, maybe in a school art class, and it might have felt like something to memorize for a quiz rather than something useful. It's actually one of the most practical tools available to you as an artist - not because you need to know the names, but because of what its layout tells you about which colors naturally play well together."
+        },
+        {
+          "type": "heading",
+          "text": "Primary, Secondary, Tertiary"
+        },
+        {
+          "type": "paragraph",
+          "text": "The wheel starts with three primary colors - red, yellow, and blue - spaced evenly around it. Mix two neighboring primaries and you get the secondary colors between them: orange, green, and violet. Mix a primary with the secondary next to it and you get the six tertiary colors that fill in the rest of the wheel, like red-orange or blue-green. Twelve colors, evenly spaced, in a predictable order - and that order is the actual useful part."
+        },
+        {
+          "type": "diagram",
+          "caption": "A twelve-color wheel: primary, secondary, and tertiary colors",
+          "ops": [
+            {
+              "type": "arc",
+              "left": 0.17,
+              "top": 0.17,
+              "right": 0.83,
+              "bottom": 0.83,
+              "startAngle": -105,
+              "sweepAngle": 30,
+              "useCenter": true,
+              "fillColor": "#E8342B"
+            },
+            {
+              "type": "arc",
+              "left": 0.17,
+              "top": 0.17,
+              "right": 0.83,
+              "bottom": 0.83,
+              "startAngle": -75,
+              "sweepAngle": 30,
+              "useCenter": true,
+              "fillColor": "#E8672B"
+            },
+            {
+              "type": "arc",
+              "left": 0.17,
+              "top": 0.17,
+              "right": 0.83,
+              "bottom": 0.83,
+              "startAngle": -45,
+              "sweepAngle": 30,
+              "useCenter": true,
+              "fillColor": "#E8962B"
+            },
+            {
+              "type": "arc",
+              "left": 0.17,
+              "top": 0.17,
+              "right": 0.83,
+              "bottom": 0.83,
+              "startAngle": -15,
+              "sweepAngle": 30,
+              "useCenter": true,
+              "fillColor": "#E8C22B"
+            },
+            {
+              "type": "arc",
+              "left": 0.17,
+              "top": 0.17,
+              "right": 0.83,
+              "bottom": 0.83,
+              "startAngle": 15,
+              "sweepAngle": 30,
+              "useCenter": true,
+              "fillColor": "#F0E82B"
+            },
+            {
+              "type": "arc",
+              "left": 0.17,
+              "top": 0.17,
+              "right": 0.83,
+              "bottom": 0.83,
+              "startAngle": 45,
+              "sweepAngle": 30,
+              "useCenter": true,
+              "fillColor": "#A0E82B"
+            },
+            {
+              "type": "arc",
+              "left": 0.17,
+              "top": 0.17,
+              "right": 0.83,
+              "bottom": 0.83,
+              "startAngle": 75,
+              "sweepAngle": 30,
+              "useCenter": true,
+              "fillColor": "#2BE84B"
+            },
+            {
+              "type": "arc",
+              "left": 0.17,
+              "top": 0.17,
+              "right": 0.83,
+              "bottom": 0.83,
+              "startAngle": 105,
+              "sweepAngle": 30,
+              "useCenter": true,
+              "fillColor": "#2BE8AE"
+            },
+            {
+              "type": "arc",
+              "left": 0.17,
+              "top": 0.17,
+              "right": 0.83,
+              "bottom": 0.83,
+              "startAngle": 135,
+              "sweepAngle": 30,
+              "useCenter": true,
+              "fillColor": "#2B8EE8"
+            },
+            {
+              "type": "arc",
+              "left": 0.17,
+              "top": 0.17,
+              "right": 0.83,
+              "bottom": 0.83,
+              "startAngle": 165,
+              "sweepAngle": 30,
+              "useCenter": true,
+              "fillColor": "#5B2BE8"
+            },
+            {
+              "type": "arc",
+              "left": 0.17,
+              "top": 0.17,
+              "right": 0.83,
+              "bottom": 0.83,
+              "startAngle": 195,
+              "sweepAngle": 30,
+              "useCenter": true,
+              "fillColor": "#9A2BE8"
+            },
+            {
+              "type": "arc",
+              "left": 0.17,
+              "top": 0.17,
+              "right": 0.83,
+              "bottom": 0.83,
+              "startAngle": 225,
+              "sweepAngle": 30,
+              "useCenter": true,
+              "fillColor": "#E82B7E"
+            },
+            {
+              "type": "line",
+              "x1": 0.5,
+              "y1": 0.5,
+              "x2": 0.41459,
+              "y2": 0.181244,
+              "color": "#FFFFFF",
+              "strokeWidth": 0.0025,
+              "alpha": 0.627451
+            },
+            {
+              "type": "line",
+              "x1": 0.5,
+              "y1": 0.5,
+              "x2": 0.58541,
+              "y2": 0.181244,
+              "color": "#FFFFFF",
+              "strokeWidth": 0.0025,
+              "alpha": 0.627451
+            },
+            {
+              "type": "line",
+              "x1": 0.5,
+              "y1": 0.5,
+              "x2": 0.733345,
+              "y2": 0.266655,
+              "color": "#FFFFFF",
+              "strokeWidth": 0.0025,
+              "alpha": 0.627451
+            },
+            {
+              "type": "line",
+              "x1": 0.5,
+              "y1": 0.5,
+              "x2": 0.818756,
+              "y2": 0.41459,
+              "color": "#FFFFFF",
+              "strokeWidth": 0.0025,
+              "alpha": 0.627451
+            },
+            {
+              "type": "line",
+              "x1": 0.5,
+              "y1": 0.5,
+              "x2": 0.818756,
+              "y2": 0.58541,
+              "color": "#FFFFFF",
+              "strokeWidth": 0.0025,
+              "alpha": 0.627451
+            },
+            {
+              "type": "line",
+              "x1": 0.5,
+              "y1": 0.5,
+              "x2": 0.733345,
+              "y2": 0.733345,
+              "color": "#FFFFFF",
+              "strokeWidth": 0.0025,
+              "alpha": 0.627451
+            },
+            {
+              "type": "line",
+              "x1": 0.5,
+              "y1": 0.5,
+              "x2": 0.58541,
+              "y2": 0.818756,
+              "color": "#FFFFFF",
+              "strokeWidth": 0.0025,
+              "alpha": 0.627451
+            },
+            {
+              "type": "line",
+              "x1": 0.5,
+              "y1": 0.5,
+              "x2": 0.41459,
+              "y2": 0.818756,
+              "color": "#FFFFFF",
+              "strokeWidth": 0.0025,
+              "alpha": 0.627451
+            },
+            {
+              "type": "line",
+              "x1": 0.5,
+              "y1": 0.5,
+              "x2": 0.266655,
+              "y2": 0.733345,
+              "color": "#FFFFFF",
+              "strokeWidth": 0.0025,
+              "alpha": 0.627451
+            },
+            {
+              "type": "line",
+              "x1": 0.5,
+              "y1": 0.5,
+              "x2": 0.181244,
+              "y2": 0.58541,
+              "color": "#FFFFFF",
+              "strokeWidth": 0.0025,
+              "alpha": 0.627451
+            },
+            {
+              "type": "line",
+              "x1": 0.5,
+              "y1": 0.5,
+              "x2": 0.181244,
+              "y2": 0.41459,
+              "color": "#FFFFFF",
+              "strokeWidth": 0.0025,
+              "alpha": 0.627451
+            },
+            {
+              "type": "line",
+              "x1": 0.5,
+              "y1": 0.5,
+              "x2": 0.266655,
+              "y2": 0.266655,
+              "color": "#FFFFFF",
+              "strokeWidth": 0.0025,
+              "alpha": 0.627451
+            },
+            {
+              "type": "circle",
+              "cx": 0.5,
+              "cy": 0.5,
+              "r": 0.33,
+              "strokeColor": "#3C3732",
+              "strokeWidth": 0.004
+            },
+            {
+              "type": "line",
+              "x1": 0.5,
+              "y1": 0.2195,
+              "x2": 0.5,
+              "y2": 0.0545,
+              "color": "#5A544E",
+              "strokeWidth": 0.0025
+            },
+            {
+              "type": "circle",
+              "cx": 0.5,
+              "cy": 0.2195,
+              "r": 0.006,
+              "fillColor": "#322E2A"
+            },
+            {
+              "type": "text",
+              "x": 0.5,
+              "y": 0.0545,
+              "text": "primary",
+              "color": "#322E2A",
+              "textSize": 0.026,
+              "align": "center"
+            },
+            {
+              "type": "line",
+              "x1": 0.64025,
+              "y1": 0.25708,
+              "x2": 0.72275,
+              "y2": 0.114186,
+              "color": "#5A544E",
+              "strokeWidth": 0.0025
+            },
+            {
+              "type": "circle",
+              "cx": 0.64025,
+              "cy": 0.25708,
+              "r": 0.006,
+              "fillColor": "#322E2A"
+            },
+            {
+              "type": "text",
+              "x": 0.72275,
+              "y": 0.114186,
+              "text": "tertiary",
+              "color": "#322E2A",
+              "textSize": 0.026,
+              "align": "left"
+            },
+            {
+              "type": "line",
+              "x1": 0.74292,
+              "y1": 0.35975,
+              "x2": 0.885814,
+              "y2": 0.27725,
+              "color": "#5A544E",
+              "strokeWidth": 0.0025
+            },
+            {
+              "type": "circle",
+              "cx": 0.74292,
+              "cy": 0.35975,
+              "r": 0.006,
+              "fillColor": "#322E2A"
+            },
+            {
+              "type": "text",
+              "x": 0.885814,
+              "y": 0.27725,
+              "text": "secondary",
+              "color": "#322E2A",
+              "textSize": 0.026,
+              "align": "right"
+            }
+          ]
+        },
+        {
+          "type": "heading",
+          "text": "What the Layout Actually Tells You"
+        },
+        {
+          "type": "paragraph",
+          "text": "Once the colors are arranged in this order, their position on the wheel tells you how they'll behave together before you even try it. Colors sitting right next to each other share a lot in common and tend to blend harmoniously. Colors sitting across from each other share almost nothing in common and create strong contrast. That relationship - near versus opposite - is the whole basis for the color schemes in the next lesson, and it's a much faster way to pick colors than guessing and checking."
+        },
+        {
+          "type": "bulletList",
+          "items": [
+            "Primary colors: red, yellow, blue - can't be mixed from other colors.",
+            "Secondary colors: orange, green, violet - each sits between the two primaries that mix to make it.",
+            "Tertiary colors: the six in between, like yellow-orange or blue-violet - each named for the two colors that combine to make it.",
+            "Colors near each other on the wheel = naturally harmonious.",
+            "Colors opposite each other on the wheel = naturally high contrast."
+          ]
+        },
+        {
+          "type": "tip",
+          "text": "You don't need to memorize which colors mix to make which - you'll absorb that naturally the more you use the wheel. What's worth remembering is just the layout logic: neighbors are harmonious, opposites are contrast."
+        },
+        {
+          "type": "tip",
+          "text": "Try this next time you're picking colors for a piece: before you choose anything, glance at where your main color sits on the wheel and decide on purpose whether you want your other colors to be neighbors (calm, unified) or opposites (bold, eye-catching). Deciding on purpose beats picking at random almost every time."
+        }
+      ]
+    },
+    {
+      "id": "complementary-and-analogous",
+      "title": "Complementary and Analogous Color Schemes",
+      "summary": "Complementary colors sit opposite on the wheel for vibrant contrast, analogous colors sit next to each other for calm harmony - knowing which to reach for changes the whole feel of a piece.",
+      "blocks": [
+        {
+          "type": "paragraph",
+          "text": "Now that you know how the color wheel is laid out, here are the two simplest, most useful ways to actually use it when picking colors for a piece. Almost every color scheme you've ever admired in someone else's art is built on one of these two ideas, or a combination of both."
+        },
+        {
+          "type": "heading",
+          "text": "Complementary: Opposite Colors, High Contrast"
+        },
+        {
+          "type": "paragraph",
+          "text": "Complementary colors sit directly across the wheel from each other - red and green, blue and orange, yellow and violet. Because they have nothing in common, placing them next to each other creates strong, vibrant contrast that immediately draws the eye. Think of a red apple with a green leaf, or a basketball court's orange floor against blue accents. Reach for a complementary scheme when you want something to feel bold, energetic, or eye- catching, or when you need one specific part of a piece to stand out clearly from everything around it."
+        },
+        {
+          "type": "heading",
+          "text": "Analogous: Neighboring Colors, Calm Harmony"
+        },
+        {
+          "type": "paragraph",
+          "text": "Analogous colors sit next to each other on the wheel - like the oranges, pinks, and reds you'd see in a sunset, or the blues and blue-greens of an ocean scene. Because they're close relatives, they blend together smoothly and naturally, without any single color fighting for attention. Reach for an analogous scheme when you want something to feel cohesive, calm, or naturalistic - it's a very hard combination to get wrong because the colors are already related to begin with."
+        },
+        {
+          "type": "bulletList",
+          "items": [
+            "Complementary = opposite on the wheel, high contrast, energetic - example: a red apple with a green leaf.",
+            "Analogous = neighboring on the wheel, harmonious, calm - example: an orange-pink-violet sunset.",
+            "Use complementary when you want something specific to pop or grab attention.",
+            "Use analogous when you want a piece to feel unified, calm, or naturally cohesive.",
+            "You can combine them: an analogous palette for most of a piece, with one small complementary accent to draw the eye exactly where you want it."
+          ]
+        },
+        {
+          "type": "tip",
+          "text": "If a piece feels visually loud or chaotic in a way you didn't intend, check whether you've accidentally used several complementary pairs at full saturation all at once. Toning down the saturation on one side of the pair, or leaning analogous instead, usually calms it right down."
+        },
+        {
+          "type": "tip",
+          "text": "A great low-stakes way to practice this: take any simple drawing you've already made and color it twice on two different layers - once with a complementary scheme, once with an analogous one. Seeing the same exact linework produce two completely different moods is one of the fastest ways to really feel how much color scheme matters."
+        }
+      ]
+    },
+    {
+      "id": "warm-and-cool-colors",
+      "title": "Warm and Cool Colors",
+      "summary": "Warm colors feel close and energetic while cool colors feel distant and calm, and you can use that effect on purpose to push backgrounds back and pull subjects forward.",
+      "blocks": [
+        {
+          "type": "paragraph",
+          "text": "Colors don't just look different from each other - they feel different, and they can even change how close or far away something seems, before you've drawn a single line of actual perspective. That's the warm-and-cool effect, and once you know it's there, you can use it on purpose instead of by accident."
+        },
+        {
+          "type": "heading",
+          "text": "Warm Colors: Advancing and Energetic"
+        },
+        {
+          "type": "paragraph",
+          "text": "Reds, oranges, and yellows are considered warm. They tend to feel energetic, close, and attention-grabbing - warm colors seem to push forward and advance toward the viewer, even on a flat surface. That's part of why a warm-colored subject in the foreground of a piece tends to feel present and immediate."
+        },
+        {
+          "type": "heading",
+          "text": "Cool Colors: Receding and Calm"
+        },
+        {
+          "type": "paragraph",
+          "text": "Blues, greens, and violets are considered cool. They tend to feel calmer, quieter, and farther away - cool colors seem to recede or sink back into the distance, which is exactly why hazy mountains in the background of a landscape are almost always painted in cool blues and purples, even when you know their actual color is closer to green or gray."
+        },
+        {
+          "type": "heading",
+          "text": "Using It On Purpose"
+        },
+        {
+          "type": "paragraph",
+          "text": "This effect is genuinely useful in something as simple as a coloring page. If you want your background to feel like it's sitting behind your main subject, lean cooler back there - blues, muted greens, soft violets. Then keep your main subject in warmer tones - reds, oranges, warm yellows. Even with zero actual perspective drawing, that temperature contrast alone will make the subject feel like it's sitting in front of the background instead of pasted flat on top of it."
+        },
+        {
+          "type": "bulletList",
+          "items": [
+            "Warm = red, orange, yellow family - feels close, energetic, advancing.",
+            "Cool = blue, green, violet family - feels distant, calm, receding.",
+            "Push backgrounds back with cooler, more muted colors.",
+            "Pull your main subject forward with warmer colors, or simply higher saturation.",
+            "Even a single piece can mix both - a warm subject in front of a cool background is one of the most reliable combinations there is."
+          ]
+        },
+        {
+          "type": "tip",
+          "text": "Not every color is purely warm or purely cool - a yellow-green can lean either way depending on what's near it, and that's normal. Don't get stuck trying to sort every color into a strict category. Trust your gut on whether something feels warmer or cooler in context, and adjust from there."
+        },
+        {
+          "type": "tip",
+          "text": "Try a simple experiment on a coloring page you've already got: color the background in cool blues and the main subject in warm oranges and reds, even if that's not their realistic color. Notice how much the subject seems to lift off the page compared to when everything's the same temperature."
+        }
+      ]
+    },
+    {
+      "id": "building-a-palette",
+      "title": "Building a Palette You'll Actually Use",
+      "summary": "A practical walkthrough of picking five to eight colors before you start coloring and saving them as a custom palette in Vellum Studio, so your color choices look intentional instead of random.",
+      "blocks": [
+        {
+          "type": "paragraph",
+          "text": "Here's a habit that makes a bigger difference than almost anything else in this course: deciding on your colors before you start coloring, instead of picking them one at a time as you go. It sounds like a small change in order, but it's the difference between a piece that looks planned and cohesive and one that looks like it was colored by accident, even when the individual color choices weren't bad."
+        },
+        {
+          "type": "heading",
+          "text": "Why Constrain Yourself First"
+        },
+        {
+          "type": "paragraph",
+          "text": "When you pick colors as you go, piece by piece, you're making dozens of tiny independent decisions with no memory of each other - and it shows, because nothing was chosen with the whole picture in mind. When you pick a small set of colors upfront and commit to using only those, every choice you make afterward is automatically related to every other choice, because they're all coming from the same limited set. That constraint is what makes a finished piece look intentional. It's not about having fewer options - it's about every option you do have already working together."
+        },
+        {
+          "type": "heading",
+          "text": "Picking Your 5-8 Colors"
+        },
+        {
+          "type": "paragraph",
+          "text": "Start with the tools from the last few lessons. Pick one or two main hues using the color wheel, then decide whether you want the rest of your palette to lean analogous (neighboring, harmonious) or to include a complementary accent (opposite, high-contrast) for something you want to stand out. Include a range of values - don't just pick five colors that are all medium-bright, or you'll have nothing to shade with. A solid starting palette usually has at least one color that's quite light, one that's quite dark, and a few in between."
+        },
+        {
+          "type": "heading",
+          "text": "Saving It as a Custom Palette"
+        },
+        {
+          "type": "paragraph",
+          "text": "Once you've settled on your colors, save them as a custom palette using the app's Palette feature, so they're sitting right there ready to tap while you work, instead of re-mixing the same color from scratch every time you need it. This does double duty: it saves you time, and it physically keeps you from wandering outside your planned colors out of convenience partway through the piece, which is one of the easiest ways a palette quietly falls apart."
+        },
+        {
+          "type": "bulletList",
+          "items": [
+            "Pick 5-8 colors before you start coloring, not as you go.",
+            "Choose your main hue(s) from the color wheel, then decide analogous or complementary for the rest.",
+            "Make sure your palette includes a real range of values - light, dark, and a few steps between.",
+            "Save the set as a custom palette in the app so it's one tap away the whole time you're working.",
+            "If you find yourself wanting a color that's not in your saved palette partway through, pause and ask whether it actually fits, or whether you're reaching for it out of habit."
+          ]
+        },
+        {
+          "type": "tip",
+          "text": "It's completely fine to build a palette, start coloring, and realize partway through that one color isn't working - swap it out and update your saved palette. Planning ahead doesn't mean the plan is locked in stone, it just means you're making decisions on purpose instead of by default."
+        },
+        {
+          "type": "tip",
+          "text": "If you're not sure where to start, steal a palette. Look at a photo, a piece of art, or even a few tiles from a game or a movie still that you like the color feel of, and pull five or six colors straight from it into a saved palette. Building your eye for color by copying palettes you admire is a completely normal, respected way to learn - you'll start creating your own from scratch naturally over time."
+        }
+      ]
+    }
+  ]
+}

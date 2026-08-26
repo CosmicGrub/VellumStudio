@@ -46,6 +46,20 @@ object DiagramRenderer {
                 op.fillColor?.let { canvas.drawRect(rect, fillPaint(it, op.alpha)) }
                 op.strokeColor?.let { canvas.drawRect(rect, strokePaint(s, it, op.strokeWidth, op.alpha, op.dash)) }
             }
+            is DiagramOpDto.Oval -> {
+                val rect = RectF(op.left * s, op.top * s, op.right * s, op.bottom * s)
+                op.fillColor?.let { canvas.drawOval(rect, fillPaint(it, op.alpha)) }
+                op.strokeColor?.let { canvas.drawOval(rect, strokePaint(s, it, op.strokeWidth, op.alpha, op.dash)) }
+            }
+            is DiagramOpDto.Arc -> {
+                val rect = RectF(op.left * s, op.top * s, op.right * s, op.bottom * s)
+                op.fillColor?.let {
+                    canvas.drawArc(rect, op.startAngle, op.sweepAngle, op.useCenter, fillPaint(it, op.alpha))
+                }
+                op.strokeColor?.let {
+                    canvas.drawArc(rect, op.startAngle, op.sweepAngle, op.useCenter, strokePaint(s, it, op.strokeWidth, op.alpha, op.dash))
+                }
+            }
             is DiagramOpDto.Text -> {
                 val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
                     color = colorWithAlpha(op.color, op.alpha)

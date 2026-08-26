@@ -249,4 +249,168 @@ class DemoSpecBuilderTest {
         assertEquals(demo.stages.map { it.caption }, secondParseDemo!!.stages.map { it.caption })
         assertEquals(demo.stages.map { s -> s.strokes.map { it.brushId } }, secondParseDemo.stages.map { s -> s.strokes.map { it.brushId } })
     }
+
+    /**
+     * Part of the "remaining migrations" pass: [CourseFoundations], whose "building-volume" lesson
+     * carries a flagship [LessonDemo]. Its four strokes were originally built with
+     * `Path.addCircle`/`Path.addOval` (not the moveTo/lineTo/quadTo/cubicTo vocabulary
+     * [PathCommandDto] covers), so each was re-expressed as the standard 4-cubic-Bezier circle/
+     * ellipse approximation (kappa = 0.5522847498307936) -- this test's geometry assertions (via
+     * [assertPathsMatch] against a real `Path.addCircle`/`Path.addOval`) are exactly what confirms
+     * that re-expression is faithful, not just "close enough".
+     */
+    @Test fun `the real migrated foundations course loads and validates end-to-end, including its building-volume demo`() {
+        val file = File("src/main/assets/academy/foundations.json")
+        assertTrue("expected bundled asset at ${file.absolutePath}", file.exists())
+
+        val course = AcademyContentLoader.parseAndValidate(file.readText(), sourceLabel = file.path)
+
+        assertEquals("foundations", course.id)
+        assertEquals("Drawing Foundations", course.title)
+        assertEquals(Instructors.rowan.id, course.instructorId)
+        assertEquals(5, course.lessons.size)
+        assertEquals(
+            listOf(
+                "line-confidence",
+                "seeing-in-shapes",
+                "building-volume",
+                "proportions-without-ruler",
+                "gesture-drawing",
+            ),
+            course.lessons.map { it.id },
+        )
+        course.lessons.forEach { lesson ->
+            assertFalse("lesson '${lesson.id}' should have real content blocks", lesson.blocks.isEmpty())
+        }
+
+        // Only the flagship lesson carries a demo -- everything else stays text-only (plus, for
+        // seeing-in-shapes and building-volume, a static Diagram), same as the original course.
+        course.lessons.filter { it.id != "building-volume" }.forEach { lesson ->
+            assertEquals("lesson '${lesson.id}' should have no demo", null, lesson.demo)
+        }
+
+        val demo = course.lessons.single { it.id == "building-volume" }.demo
+        assertNotNull("expected the flagship lesson to carry a real demo", demo)
+        assertEquals(4, demo!!.stages.size)
+        assertEquals(
+            listOf(
+                "Start with a plain circle.",
+                "Add one curved line across it, like a belt — that alone reads as a sphere.",
+                "Now a cylinder: the top ellipse, then a matching one below it.",
+                "Connect the left edges, then the right edges, with two straight lines.",
+            ),
+            demo.stages.map { it.caption },
+        )
+
+        // The circle/oval strokes were converted from the original `Path.addCircle`/`addOval` calls
+        // into an equivalent moveTo + 4x cubicTo Bezier approximation (kappa = 0.5522847498307936):
+        // a real android.graphics.Path from that construction is tangent to its bounding square at
+        // each of its four cardinal points, so its computeBounds() exactly matches the source
+        // addCircle/addOval RectF -- a precise, not approximate, proof this re-expression is
+        // geometrically faithful (PathMeasure-sampling, used elsewhere in this file, would only
+        // prove "close", since a Bezier's arc-length parametrization isn't perfectly uniform).
+        fun bounds(path: Path): RectF = RectF().also { path.computeBounds(it, true) }
+
+        val circleStroke = demo.stages[0].strokes.single()
+        assertEquals("fineliner", circleStroke.brushId)
+        assertEquals(Color.parseColor("#3A3A3A"), circleStroke.colorArgb)
+        val circleBounds = bounds(circleStroke.path)
+        assertEquals(0.13f, circleBounds.left, 0.0001f)
+        assertEquals(0.25f, circleBounds.top, 0.0001f)
+        assertEquals(0.47f, circleBounds.right, 0.0001f)
+        assertEquals(0.59f, circleBounds.bottom, 0.0001f)
+
+        val horizonStroke = demo.stages[1].strokes.single()
+        assertEquals("pencil", horizonStroke.brushId)
+        assertEquals(Color.parseColor("#9A9A9A"), horizonStroke.colorArgb)
+        assertEquals(0.8f, horizonStroke.sizeMultiplier, 0.0001f)
+        val horizonBounds = bounds(horizonStroke.path)
+        assertEquals(0.13f, horizonBounds.left, 0.0001f)
+        assertEquals(0.3656f, horizonBounds.top, 0.0001f)
+        assertEquals(0.47f, horizonBounds.right, 0.0001f)
+        assertEquals(0.4744f, horizonBounds.bottom, 0.0001f)
+
+        val cylinderStrokes = demo.stages[2].strokes
+        assertEquals(2, cylinderStrokes.size)
+        val topOvalBounds = bounds(cylinderStrokes[0].path)
+        assertEquals(0.61f, topOvalBounds.left, 0.0001f)
+        assertEquals(0.215f, topOvalBounds.top, 0.0001f)
+        assertEquals(0.83f, topOvalBounds.right, 0.0001f)
+        assertEquals(0.305f, topOvalBounds.bottom, 0.0001f)
+        val botOvalBounds = bounds(cylinderStrokes[1].path)
+        assertEquals(0.61f, botOvalBounds.left, 0.0001f)
+        assertEquals(0.515f, botOvalBounds.top, 0.0001f)
+        assertEquals(0.83f, botOvalBounds.right, 0.0001f)
+        assertEquals(0.605f, botOvalBounds.bottom, 0.0001f)
+
+        val lineStrokes = demo.stages[3].strokes
+        assertPathsMatch(Path().apply { moveTo(0.61f, 0.26f); lineTo(0.61f, 0.56f) }, lineStrokes[0].path)
+        assertPathsMatch(Path().apply { moveTo(0.83f, 0.26f); lineTo(0.83f, 0.56f) }, lineStrokes[1].path)
+    }
+
+    /**
+     * Part of the "remaining migrations" pass: [CourseGraffiti], whose "bubble-letters-throw-up"
+     * lesson carries a flagship [LessonDemo]. This course needed no format changes at all -- every
+     * stroke was already built entirely from moveTo/quadTo/cubicTo.
+     */
+    @Test fun `the real migrated graffiti course loads and validates end-to-end, including its bubble-letter demo`() {
+        val file = File("src/main/assets/academy/graffiti.json")
+        assertTrue("expected bundled asset at ${file.absolutePath}", file.exists())
+
+        val course = AcademyContentLoader.parseAndValidate(file.readText(), sourceLabel = file.path)
+
+        assertEquals("graffiti-lettering-style", course.id)
+        assertEquals("Graffiti Lettering & Style", course.title)
+        assertEquals(Instructors.kai.id, course.instructorId)
+        assertEquals(5, course.lessons.size)
+        assertEquals(
+            listOf(
+                "letterform-foundation",
+                "bubble-letters-throw-up",
+                "layers-outline-fill-highlight-shadow",
+                "wildstyle-breaking-rules-on-purpose",
+                "texture-drips-fades-stencils",
+            ),
+            course.lessons.map { it.id },
+        )
+        course.lessons.forEach { lesson ->
+            assertFalse("lesson '${lesson.id}' should have real content blocks", lesson.blocks.isEmpty())
+        }
+
+        course.lessons.filter { it.id != "bubble-letters-throw-up" }.forEach { lesson ->
+            assertEquals("lesson '${lesson.id}' should have no demo", null, lesson.demo)
+        }
+
+        val demo = course.lessons.single { it.id == "bubble-letters-throw-up" }.demo
+        assertNotNull("expected the flagship lesson to carry a real demo", demo)
+        assertEquals(4, demo!!.stages.size)
+
+        val outlineStroke = demo.stages[1].strokes.single()
+        assertEquals("graffiti_fatcap", outlineStroke.brushId)
+        assertEquals(Color.parseColor("#2A2A2A"), outlineStroke.colorArgb)
+        assertEquals(1.3f, outlineStroke.sizeMultiplier, 0.0001f)
+        assertPathsMatch(
+            Path().apply {
+                moveTo(0.58f, 0.32f)
+                cubicTo(0.50f, 0.22f, 0.26f, 0.24f, 0.22f, 0.38f)
+                cubicTo(0.18f, 0.52f, 0.34f, 0.54f, 0.46f, 0.56f)
+                cubicTo(0.60f, 0.58f, 0.70f, 0.64f, 0.64f, 0.76f)
+                cubicTo(0.56f, 0.86f, 0.32f, 0.84f, 0.26f, 0.72f)
+            },
+            outlineStroke.path,
+        )
+
+        val fillStroke = demo.stages[2].strokes.single()
+        assertEquals("graffiti_spray", fillStroke.brushId)
+        assertEquals(Color.parseColor("#DD3355"), fillStroke.colorArgb)
+        assertEquals(2.4f, fillStroke.sizeMultiplier, 0.0001f)
+
+        val highlightStroke = demo.stages[3].strokes.single()
+        assertEquals("graffiti_wildstyle", highlightStroke.brushId)
+        assertEquals(Color.parseColor("#FFFFFF"), highlightStroke.colorArgb)
+        assertPathsMatch(
+            Path().apply { moveTo(0.30f, 0.34f); quadTo(0.34f, 0.28f, 0.42f, 0.30f) },
+            highlightStroke.path,
+        )
+    }
 }

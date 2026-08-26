@@ -256,6 +256,41 @@ class AcademyContentLoaderTest {
         assertThrowsAcademyContentException { AcademyContentLoader.parseAndValidate(courseWithDiagramOps(badAlign)) }
     }
 
+    @Test fun `an oval op with left greater than or equal to right is rejected`() {
+        val badOval = """{"type": "oval", "left": 0.6, "top": 0.1, "right": 0.6, "bottom": 0.9, "fillColor": "#000000"}"""
+        assertThrowsAcademyContentException { AcademyContentLoader.parseAndValidate(courseWithDiagramOps(badOval)) }
+    }
+
+    @Test fun `an oval op with neither fillColor nor strokeColor is rejected`() {
+        val bareOval = """{"type": "oval", "left": 0.1, "top": 0.1, "right": 0.9, "bottom": 0.9}"""
+        assertThrowsAcademyContentException { AcademyContentLoader.parseAndValidate(courseWithDiagramOps(bareOval)) }
+    }
+
+    @Test fun `a valid oval op parses into a real Diagram block`() {
+        val goodOval = """{"type": "oval", "left": 0.1, "top": 0.1, "right": 0.9, "bottom": 0.5, "fillColor": "#00FF00"}"""
+        val course = AcademyContentLoader.parseAndValidate(courseWithDiagramOps(goodOval))
+        assertTrue(course.lessons.single().blocks.single() is LessonBlock.Diagram)
+    }
+
+    @Test fun `an arc op with a zero sweepAngle is rejected`() {
+        val zeroSweep =
+            """{"type": "arc", "left": 0.1, "top": 0.1, "right": 0.9, "bottom": 0.9, "startAngle": 0, "sweepAngle": 0, "fillColor": "#000000"}"""
+        assertThrowsAcademyContentException { AcademyContentLoader.parseAndValidate(courseWithDiagramOps(zeroSweep)) }
+    }
+
+    @Test fun `an arc op with neither fillColor nor strokeColor is rejected`() {
+        val bareArc =
+            """{"type": "arc", "left": 0.1, "top": 0.1, "right": 0.9, "bottom": 0.9, "startAngle": 0, "sweepAngle": 90}"""
+        assertThrowsAcademyContentException { AcademyContentLoader.parseAndValidate(courseWithDiagramOps(bareArc)) }
+    }
+
+    @Test fun `a valid arc op with useCenter parses into a real Diagram block`() {
+        val goodArc =
+            """{"type": "arc", "left": 0.1, "top": 0.1, "right": 0.9, "bottom": 0.9, "startAngle": -90, "sweepAngle": 30, "useCenter": true, "fillColor": "#00FF00"}"""
+        val course = AcademyContentLoader.parseAndValidate(courseWithDiagramOps(goodArc))
+        assertTrue(course.lessons.single().blocks.single() is LessonBlock.Diagram)
+    }
+
     // --- Demo blocks: reject-path only here -- see DemoSpecBuilderTest for the happy path/end-to-end
     // proof, which needs Robolectric because building a real LessonDemo means building a real
     // android.graphics.Path/Color the moment it runs (see DemoSpecBuilder's own doc). Every case
@@ -485,5 +520,121 @@ class AcademyContentLoaderTest {
         val twoPointDiagram = course.lessons.single { it.id == "two-point-perspective" }.blocks
             .filterIsInstance<LessonBlock.Diagram>().single()
         assertEquals("One vertical corner edge, two vanishing points, two receding faces", twoPointDiagram.caption)
+    }
+
+    /**
+     * Part of the "remaining migrations" pass: [CourseColorTheory], whose "color-wheel" lesson
+     * needed the new [DiagramOpDto.Arc] case (pie-slice wedges) added by this same pass.
+     */
+    @Test fun `the real migrated color-theory course loads and validates end-to-end, including its color wheel diagram`() {
+        val file = File("src/main/assets/academy/color-theory.json")
+        assertTrue("expected bundled asset at ${file.absolutePath}", file.exists())
+
+        val course = AcademyContentLoader.parseAndValidate(file.readText(), sourceLabel = file.path)
+
+        assertEquals("color-theory", course.id)
+        assertEquals("Color Theory", course.title)
+        assertEquals(Instructors.marisol.id, course.instructorId)
+        assertEquals(5, course.lessons.size)
+        assertEquals(
+            listOf(
+                "hue-saturation-value",
+                "color-wheel",
+                "complementary-and-analogous",
+                "warm-and-cool-colors",
+                "building-a-palette",
+            ),
+            course.lessons.map { it.id },
+        )
+        course.lessons.forEach { lesson ->
+            assertFalse("lesson '${lesson.id}' should have real content blocks", lesson.blocks.isEmpty())
+            assertEquals(null, lesson.demo)
+        }
+
+        val wheelDiagram = course.lessons.single { it.id == "color-wheel" }.blocks
+            .filterIsInstance<LessonBlock.Diagram>().single()
+        assertEquals("A twelve-color wheel: primary, secondary, and tertiary colors", wheelDiagram.caption)
+    }
+
+    /**
+     * Part of the "remaining migrations" pass: [CourseAnatomy], whose two diagrams (the Loomis
+     * head construction and the 7.5-head figure ruler) needed no format changes at all -- both
+     * were already expressible with the existing Line/Circle/Path/Text vocabulary.
+     */
+    @Test fun `the real migrated anatomy course loads and validates end-to-end, including its two diagrams`() {
+        val file = File("src/main/assets/academy/anatomy.json")
+        assertTrue("expected bundled asset at ${file.absolutePath}", file.exists())
+
+        val course = AcademyContentLoader.parseAndValidate(file.readText(), sourceLabel = file.path)
+
+        assertEquals("anatomy", course.id)
+        assertEquals("Anatomy Basics", course.title)
+        assertEquals(Instructors.rowan.id, course.instructorId)
+        assertEquals(4, course.lessons.size)
+        assertEquals(
+            listOf(
+                "loomis-head-method",
+                "placing-facial-features",
+                "figure-proportions-basics",
+                "gesture-poses-figure",
+            ),
+            course.lessons.map { it.id },
+        )
+        course.lessons.forEach { lesson ->
+            assertFalse("lesson '${lesson.id}' should have real content blocks", lesson.blocks.isEmpty())
+            assertEquals(null, lesson.demo)
+        }
+
+        val loomisDiagram = course.lessons.single { it.id == "loomis-head-method" }.blocks
+            .filterIsInstance<LessonBlock.Diagram>().single()
+        assertTrue(loomisDiagram.caption.startsWith("The Loomis head"))
+
+        val figureDiagram = course.lessons.single { it.id == "figure-proportions-basics" }.blocks
+            .filterIsInstance<LessonBlock.Diagram>().single()
+        assertTrue(figureDiagram.caption.startsWith("A simple 7.5-head-tall measuring stick"))
+    }
+
+    /**
+     * Part of the "remaining migrations" pass: [CourseShading], migrated only PARTIALLY -- see
+     * CourseShading.kt's own doc for why its two gradient/shader/clipPath diagrams stay
+     * hand-authored Kotlin rather than a lossy JSON approximation. This test covers exactly the
+     * JSON half: `shading.json` carries all six lessons' real prose, with the two diagram-bearing
+     * lessons' `blocks` simply omitting the one block JSON can't express (CourseShading.kt itself
+     * -- not AcademyContentLoader -- reinserts the real diagrams; that reinsertion is covered by
+     * [CourseShadingDiagramInsertionTest], plus this migration's on-device verification).
+     */
+    @Test fun `the real migrated shading course JSON loads and validates end-to-end`() {
+        val file = File("src/main/assets/academy/shading.json")
+        assertTrue("expected bundled asset at ${file.absolutePath}", file.exists())
+
+        val course = AcademyContentLoader.parseAndValidate(file.readText(), sourceLabel = file.path)
+
+        assertEquals("shading", course.id)
+        assertEquals("Shading & Light", course.title)
+        assertEquals(Instructors.marisol.id, course.instructorId)
+        assertEquals(6, course.lessons.size)
+        assertEquals(
+            listOf(
+                "five-values-of-light",
+                "picking-a-light-source",
+                "shading-a-sphere-step-by-step",
+                "shading-cubes-and-cylinders",
+                "blending-techniques-for-this-app",
+                "cross-hatching-and-mark-making",
+            ),
+            course.lessons.map { it.id },
+        )
+        course.lessons.forEach { lesson ->
+            assertFalse("lesson '${lesson.id}' should have real content blocks", lesson.blocks.isEmpty())
+            assertEquals(null, lesson.demo)
+            // Not one of this course's six lessons has a Diagram block in the raw JSON: the four
+            // plain-text lessons never had one, and the two that DO have one in the real app get it
+            // reinserted by CourseShading.kt itself, after this parse -- never from this JSON.
+            assertTrue(
+                "lesson '${lesson.id}' should have no Diagram block straight out of the JSON",
+                lesson.blocks.none { it is LessonBlock.Diagram },
+            )
+        }
+        assertEquals(course, AcademyContentLoader.parseAndValidate(file.readText()))
     }
 }

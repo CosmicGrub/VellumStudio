@@ -9,15 +9,22 @@ import kotlinx.serialization.Serializable
  * `(Canvas, Int) -> Unit` closure [LessonBlock.Diagram] needs.
  *
  * Deliberately scoped to exactly the vocabulary every hand-coded `CourseXxx.kt` Diagram closure
- * actually uses (confirmed by reading every one of them, not guessed): [Line], [Circle], [Rect]
- * (fill and/or stroke), [Text], and [Path] (fill and/or stroke, built from moveTo/lineTo/quadTo/
- * cubicTo). All geometry is normalized 0..1, matching the "s = size" convention every hand-coded
- * Diagram already uses -- [DiagramRenderer] multiplies every coordinate by the real pixel size at
- * render time. Two things some hand-coded diagrams elsewhere in Academy DO use that this format
- * deliberately does NOT cover: shader gradients (`RadialGradient`/`LinearGradient`, used only by
- * CourseShading's sphere/cylinder lighting) and `drawOval`/`drawArc` (used by CourseFoundations/
- * CourseAnatomy/CourseColorTheory/CourseShading, none of which this pass migrates) -- courses that
- * need those stay hand-authored Kotlin rather than force a lossy approximation here.
+ * actually uses (confirmed by reading every one of them, not guessed): [Line], [Circle], [Rect],
+ * [Oval], [Arc] (all four shapes fill and/or stroke), [Text], and [Path] (fill and/or stroke, built
+ * from moveTo/lineTo/quadTo/cubicTo). All geometry is normalized 0..1, matching the "s = size"
+ * convention every hand-coded Diagram already uses -- [DiagramRenderer] multiplies every coordinate
+ * by the real pixel size at render time.
+ *
+ * [Oval] and [Arc] were added in the "remaining migrations" pass (CourseFoundations' basic-shapes
+ * diagrams use plain filled/stroked `drawOval` ellipses for cylinders; CourseColorTheory's color
+ * wheel uses `drawArc` pie wedges) -- both are small, direct generalizations of [Rect]'s own
+ * fill/stroke shape (an ellipse inscribed in a rect; a wedge of one), not a new class of
+ * capability, so they extend this format the same way [Rect] itself already does. One real
+ * hand-coded diagram DOES use something genuinely outside even this extended vocabulary: shader
+ * gradients (`RadialGradient`/`LinearGradient`, plus `clipPath` and canvas transforms) for
+ * CourseShading's sphere/cylinder lighting illustrations. That is not a small, generalizable
+ * addition (it's a real paint/shader system plus clip regions), so those two diagrams stay
+ * hand-authored Kotlin -- see CourseShading.kt's own doc.
  *
  * Every op carries its own style rather than sharing one Paint, mirroring how each hand-coded
  * Diagram builds a handful of small local `Paint` values (`pLinePaint`/`pFillPaint`/`pLabelPaint`)
@@ -95,6 +102,46 @@ sealed class DiagramOpDto {
          * perspective box faces in CoursePerspective) close back to their starting point to form a
          * clean fillable/strokeable outline instead of leaving the last segment open. */
         val closed: Boolean = false,
+        val fillColor: String? = null,
+        val strokeColor: String? = null,
+        val strokeWidth: Float = 0f,
+        val alpha: Float = 1f,
+        val dash: List<Float>? = null,
+    ) : DiagramOpDto()
+
+    @Serializable
+    @SerialName("oval")
+    data class Oval(
+        val left: Float,
+        val top: Float,
+        val right: Float,
+        val bottom: Float,
+        val fillColor: String? = null,
+        val strokeColor: String? = null,
+        val strokeWidth: Float = 0f,
+        val alpha: Float = 1f,
+        val dash: List<Float>? = null,
+    ) : DiagramOpDto()
+
+    /**
+     * A wedge (or open arc) of an ellipse inscribed in [left]/[top]/[right]/[bottom], the same
+     * `RectF` an [Oval] would use. [startAngle]/[sweepAngle] are degrees, matching
+     * `android.graphics.Canvas.drawArc`'s own convention (0 degrees at 3 o'clock, sweeping
+     * clockwise as rendered) exactly -- there is no reason to reinvent that convention for a JSON
+     * mirror of the same call. [useCenter] mirrors `drawArc`'s own parameter of the same name:
+     * `true` draws a pie-slice wedge (a straight edge to the center on each side, matching
+     * CourseColorTheory's color-wheel wedges); `false` draws just the curved arc stroke.
+     */
+    @Serializable
+    @SerialName("arc")
+    data class Arc(
+        val left: Float,
+        val top: Float,
+        val right: Float,
+        val bottom: Float,
+        val startAngle: Float,
+        val sweepAngle: Float,
+        val useCenter: Boolean = false,
         val fillColor: String? = null,
         val strokeColor: String? = null,
         val strokeWidth: Float = 0f,
