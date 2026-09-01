@@ -28,8 +28,8 @@ import androidx.compose.foundation.lazy.items as lazyRowItems
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.AddPhotoAlternate
-import androidx.compose.material.icons.filled.ArrowBack
 import androidx.compose.material.icons.filled.Print
 import androidx.compose.material.icons.filled.Visibility
 import androidx.compose.material3.AlertDialog
@@ -170,10 +170,12 @@ fun ColoringBookScreen(
         if (creating) return
         creating = true
         scope.launch {
-            val (meta, engine) = repository.createFromTemplate(template)
-            engine.layers.forEach { it.bitmap.recycle() }
+            // A bundled template always creates a fresh project (unchanged); a user-photo-backed
+            // "My Photos" template instead reopens the one project already made from it, if any --
+            // see ProjectRepository.openOrCreateFromTemplate for the actual dedup logic.
+            val id = repository.openOrCreateFromTemplate(template)
             creating = false
-            onOpenProject(meta.id)
+            onOpenProject(id)
         }
     }
 
@@ -202,7 +204,7 @@ fun ColoringBookScreen(
         topBar = {
             TopAppBar(
                 title = { Text("Coloring Book") },
-                navigationIcon = { IconButton(onClick = onBack) { Icon(Icons.Filled.ArrowBack, contentDescription = "Back") } },
+                navigationIcon = { IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back") } },
                 actions = {
                     if (importingPhoto) {
                         Box(Modifier.padding(horizontal = 12.dp), contentAlignment = Alignment.Center) {

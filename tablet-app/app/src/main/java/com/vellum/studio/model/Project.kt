@@ -51,6 +51,17 @@ data class ProjectMeta(
     // this the hard way against a real save on R52X101MB6W before adding this annotation.
     @EncodeDefault
     val schemaVersion: Int = CURRENT_SCHEMA_VERSION,
+    // Which ColoringTemplate.id (bundled OR user-photo-backed) this project was created from, if
+    // any -- null for a project started from a blank New Canvas, and (unlike schemaVersion above)
+    // genuinely, stably null by default rather than "whatever the current value happens to be", so
+    // no @EncodeDefault dance is needed here: a project saved before this field existed has no
+    // `sourceTemplateId` key at all, decodes to null via this same default, and is indistinguishable
+    // from a project that was always missing one -- which is exactly correct, since neither case
+    // has a template to associate with. See ProjectRepository.createFromTemplate (stamps this for
+    // every template-created project) and .openOrCreateFromTemplate (the only thing that actually
+    // reads it, to decide whether a user-photo-backed template's card should reopen an existing
+    // project instead of creating a duplicate one -- see ColoringBookScreen's tap handler).
+    val sourceTemplateId: String? = null,
 ) {
     companion object {
         /**

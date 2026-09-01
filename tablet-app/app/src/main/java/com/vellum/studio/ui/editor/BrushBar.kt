@@ -17,8 +17,8 @@ import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.Backspace
 import androidx.compose.material.icons.filled.Add
-import androidx.compose.material.icons.filled.Backspace
 import androidx.compose.material.icons.filled.Brush as BrushIcon
 import androidx.compose.material.icons.filled.BlurCircular
 import androidx.compose.material.icons.filled.BlurOn
@@ -197,7 +197,7 @@ private fun iconFor(category: BrushCategory): ImageVector = when (category) {
     BrushCategory.PASTEL -> Icons.Filled.Grain
     BrushCategory.AIRBRUSH -> Icons.Filled.BlurOn
     BrushCategory.FLAT_FILL -> Icons.Filled.HorizontalRule
-    BrushCategory.ERASER -> Icons.Filled.Backspace
+    BrushCategory.ERASER -> Icons.AutoMirrored.Filled.Backspace
     // Unreachable in practice (every graffiti brush is id-matched above) -- kept only so this
     // `when` stays exhaustive over BrushCategory without a wildcard branch hiding a real gap.
     BrushCategory.GRAFFITI -> Icons.Filled.BrushIcon
