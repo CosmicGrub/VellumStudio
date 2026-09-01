@@ -233,10 +233,49 @@ class ProjectRepository(private val appContext: Context) {
             layers = engine.layers.mapIndexed { i, l -> LayerMeta(l.id, l.name, l.opacity, l.visible, l.blendMode.label, i, l.locked, l.isReferenceImage) },
             activeLayerIndex = engine.activeLayerIndex,
             schemaVersion = ProjectMeta.CURRENT_SCHEMA_VERSION,
+            // Stamped for every template-created project, bundled or user-photo-backed alike --
+            // recording it costs nothing here and it's what lets openOrCreateFromTemplate find this
+            // project again later. Only the user-photo-backed side of that pair actually queries it
+            // today; bundled templates keep creating a fresh project on every tap, unchanged.
+            sourceTemplateId = template.id,
         )
         dirFor(id).mkdirs()
         persist(meta, engine)
         meta to engine
+    }
+
+    /**
+     * Finds the id of an existing project stamped with [ProjectMeta.sourceTemplateId] == [templateId],
+     * if any -- a full scan of [listProjects]-style metadata rather than an index, same cost profile
+     * as [listProjects] itself (this app's project counts are gallery-sized, not database-sized).
+     */
+    suspend fun findProjectBySourceTemplateId(templateId: String): String? = withContext(Dispatchers.IO) {
+        val dirs = projectsRoot.listFiles { f -> f.isDirectory } ?: emptyArray()
+        dirs.firstNotNullOfOrNull { dir -> loadOrRecoverMeta(dir.name)?.takeIf { it.sourceTemplateId == templateId }?.id }
+    }
+
+    /**
+     * The Coloring Book tap-handler's actual entry point (see [com.vellum.studio.ui.coloringbook.ColoringBookScreen]'s
+     * `startProject`) -- deliberately not just [createFromTemplate] directly, because the two kinds
+     * of [ColoringTemplate] this app has are meant to behave differently on a *repeat* tap:
+     *
+     * - A bundled template ([ColoringTemplate.referenceFilePath] == null) always creates a fresh
+     *   project, exactly like [createFromTemplate] alone would -- like grabbing a new physical copy
+     *   of the page. No behavior change from before this function existed.
+     * - A user-photo-backed template (`referenceFilePath != null`, see
+     *   [UserPhotoTemplateRepository.toColoringTemplate]) behaves like reopening a document instead:
+     *   if a project already exists whose [ProjectMeta.sourceTemplateId] matches [template]'s id
+     *   ([findProjectBySourceTemplateId]), that project's id is returned directly and nothing new is
+     *   created. Only the first tap on a given "My Photos" card creates a project; every tap after
+     *   that reopens the same one.
+     */
+    suspend fun openOrCreateFromTemplate(template: ColoringTemplate, canvasSize: Int = 2048): String {
+        if (template.referenceFilePath != null) {
+            findProjectBySourceTemplateId(template.id)?.let { return it }
+        }
+        val (meta, engine) = createFromTemplate(template, canvasSize)
+        engine.layers.forEach { it.bitmap.recycle() }
+        return meta.id
     }
 
     suspend fun loadProject(id: String): Pair<ProjectMeta, CanvasEngine>? = withContext(Dispatchers.IO) {

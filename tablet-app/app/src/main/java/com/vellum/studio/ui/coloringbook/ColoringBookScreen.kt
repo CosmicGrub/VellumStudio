@@ -170,10 +170,12 @@ fun ColoringBookScreen(
         if (creating) return
         creating = true
         scope.launch {
-            val (meta, engine) = repository.createFromTemplate(template)
-            engine.layers.forEach { it.bitmap.recycle() }
+            // A bundled template always creates a fresh project (unchanged); a user-photo-backed
+            // "My Photos" template instead reopens the one project already made from it, if any --
+            // see ProjectRepository.openOrCreateFromTemplate for the actual dedup logic.
+            val id = repository.openOrCreateFromTemplate(template)
             creating = false
-            onOpenProject(meta.id)
+            onOpenProject(id)
         }
     }
 
