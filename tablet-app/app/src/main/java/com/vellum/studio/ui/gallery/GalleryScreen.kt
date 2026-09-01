@@ -21,10 +21,10 @@ import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.MenuBook
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Brush
 import androidx.compose.material.icons.filled.Delete
-import androidx.compose.material.icons.filled.MenuBook
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.School
 import androidx.compose.material.icons.filled.Settings
@@ -119,7 +119,7 @@ fun GalleryScreen(
                         Icon(Icons.Filled.School, contentDescription = "Academy")
                     }
                     IconButton(onClick = onOpenColoringBook) {
-                        Icon(Icons.Filled.MenuBook, contentDescription = "Coloring Book")
+                        Icon(Icons.AutoMirrored.Filled.MenuBook, contentDescription = "Coloring Book")
                     }
                     IconButton(onClick = onOpenConnect) {
                         Icon(Icons.Filled.Wifi, contentDescription = "Connect to PC")

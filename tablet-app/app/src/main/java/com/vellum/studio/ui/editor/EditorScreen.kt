@@ -32,7 +32,9 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.Redo
+import androidx.compose.material.icons.automirrored.filled.Undo
 import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.Balance
 import androidx.compose.material.icons.filled.Brush
@@ -43,9 +45,7 @@ import androidx.compose.material.icons.filled.IosShare
 import androidx.compose.material.icons.filled.Layers
 import androidx.compose.material.icons.filled.LooksOne
 import androidx.compose.material.icons.filled.Print
-import androidx.compose.material.icons.filled.Redo
 import androidx.compose.material.icons.filled.SaveAlt
-import androidx.compose.material.icons.filled.Undo
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
@@ -337,7 +337,7 @@ fun EditorScreen(
                 title = { Text(meta?.name ?: "Loading…", maxLines = 1) },
                 navigationIcon = {
                     IconButton(onClick = { saveNow(); onBack() }) {
-                        Icon(Icons.Filled.ArrowBack, contentDescription = "Back")
+                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
                     }
                 },
                 actions = {
@@ -364,11 +364,11 @@ fun EditorScreen(
                         IconButton(
                             onClick = ::doUndo,
                             enabled = eng?.undoManager?.canUndo == true,
-                        ) { Icon(Icons.Filled.Undo, contentDescription = "Undo") }
+                        ) { Icon(Icons.AutoMirrored.Filled.Undo, contentDescription = "Undo") }
                         IconButton(
                             onClick = ::doRedo,
                             enabled = eng?.undoManager?.canRedo == true,
-                        ) { Icon(Icons.Filled.Redo, contentDescription = "Redo") }
+                        ) { Icon(Icons.AutoMirrored.Filled.Redo, contentDescription = "Redo") }
 
                         if (eng != null) {
                             ToolModeSelector(eng)

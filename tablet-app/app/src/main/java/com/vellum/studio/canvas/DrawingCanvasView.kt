@@ -566,7 +566,6 @@ class DrawingCanvasView @JvmOverloads constructor(
         canvas.restore()
     }
 
-    private val dirtyViewRect = RectF()
     private val fullCanvasBoundsRect = RectF()
 
     /**
@@ -598,19 +597,15 @@ class DrawingCanvasView @JvmOverloads constructor(
             hasStrokeDirtyBounds = true
         }
 
-        if (canvasSpaceRect.isEmpty()) {
-            invalidate()
-            return
-        }
-        dirtyViewRect.set(canvasSpaceRect)
-        canvasMatrix.mapRect(dirtyViewRect)
-        dirtyViewRect.inset(-6f, -6f)
-        invalidate(
-            dirtyViewRect.left.toInt(),
-            dirtyViewRect.top.toInt(),
-            dirtyViewRect.right.toInt() + 1,
-            dirtyViewRect.bottom.toInt() + 1,
-        )
+        // This used to map canvasSpaceRect into view space and call the deprecated four-arg
+        // invalidate(l, t, r, b) with it. Per View.invalidate(int,int,int,int)'s own
+        // deprecation note, the framework has ignored that rect since API 21 in favor of an
+        // internally-calculated dirty area, and minSdk here is 29 -- so on every API level
+        // this app supports, that call was already 100% equivalent to plain invalidate().
+        // The real perf-scoping (bounding the expensive saveLayer to just the dirty region)
+        // happens in onDraw() via strokeDirtyBoundsCanvasSpace, which this method still
+        // populates above and is untouched by this change.
+        invalidate()
     }
 
     // ---------------------------------------------------------------- touch dispatch
