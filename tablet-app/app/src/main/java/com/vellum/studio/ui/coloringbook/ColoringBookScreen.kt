@@ -28,8 +28,8 @@ import androidx.compose.foundation.lazy.items as lazyRowItems
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.AddPhotoAlternate
-import androidx.compose.material.icons.filled.ArrowBack
 import androidx.compose.material.icons.filled.Print
 import androidx.compose.material.icons.filled.Visibility
 import androidx.compose.material3.AlertDialog
@@ -204,7 +204,7 @@ fun ColoringBookScreen(
         topBar = {
             TopAppBar(
                 title = { Text("Coloring Book") },
-                navigationIcon = { IconButton(onClick = onBack) { Icon(Icons.Filled.ArrowBack, contentDescription = "Back") } },
+                navigationIcon = { IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back") } },
                 actions = {
                     if (importingPhoto) {
                         Box(Modifier.padding(horizontal = 12.dp), contentAlignment = Alignment.Center) {
