@@ -1,8 +1,26 @@
+import java.util.Properties
+
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
     id("org.jetbrains.kotlin.plugin.compose")
     id("org.jetbrains.kotlin.plugin.serialization")
+}
+
+// Real production signing, loaded from a local, gitignored `keystore.properties` at the Gradle
+// root (tablet-app/keystore.properties -- same location/convention as the pre-existing
+// local.properties, see .gitignore). The actual keystore file itself lives OUTSIDE every git
+// worktree entirely (not just gitignored-in-tree), specifically so a stray `git add -f` or a
+// worktree-wide operation can never accidentally stage it. Deliberately optional: a fresh clone,
+// CI runner, or another device-branch worktree that hasn't been given this file falls back to
+// `null` here and the release build type below falls back to debug signing (its prior, documented
+// behavior) rather than failing the build outright -- signing material is exactly the kind of
+// secret that must never be required inline in a checked-in build script.
+val keystorePropertiesFile = rootProject.file("keystore.properties")
+val releaseSigningConfigProps: Properties? = if (keystorePropertiesFile.exists()) {
+    Properties().apply { load(keystorePropertiesFile.inputStream()) }
+} else {
+    null
 }
 
 android {
@@ -36,6 +54,17 @@ android {
         }
     }
 
+    signingConfigs {
+        if (releaseSigningConfigProps != null) {
+            create("release") {
+                storeFile = file(releaseSigningConfigProps.getProperty("storeFile"))
+                storePassword = releaseSigningConfigProps.getProperty("storePassword")
+                keyAlias = releaseSigningConfigProps.getProperty("keyAlias")
+                keyPassword = releaseSigningConfigProps.getProperty("keyPassword")
+            }
+        }
+    }
+
     buildTypes {
         release {
             // Real code shrinking/obfuscation for release builds. Verified end-to-end against a
@@ -45,15 +74,13 @@ android {
             isMinifyEnabled = true
             isShrinkResources = true
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
-            // KNOWN GAP, flagged not fixed here: this project has no production signing config at
-            // all yet -- an actual Play Store release would need a real keystore before this build
-            // type could ship. Signing with the pre-existing debug keystore is a deliberate,
-            // temporary stand-in so a real minified/shrunk *release build type* can actually be
-            // built and adb-installed on a physical device (an unsigned release APK can't be
-            // installed at all) -- which is exactly what this pass needs in order to prove
-            // minification doesn't break anything at runtime. Swap this for a real release
-            // signingConfig before ever distributing a build made with this config.
-            signingConfig = signingConfigs.getByName("debug")
+            // Real production signing, generated 2026-09-12 (RSA 4096 / SHA256withRSA, valid to
+            // 2056 -- see keystore.properties, which is present locally but never committed).
+            // Falls back to the debug keystore -- this build type's prior, temporary stand-in --
+            // wherever keystore.properties isn't present (CI, a fresh clone, another worktree
+            // that hasn't been provisioned with it), so the build never hard-fails for lack of a
+            // secret it isn't entitled to.
+            signingConfig = signingConfigs.findByName("release") ?: signingConfigs.getByName("debug")
         }
         debug {
             isDebuggable = true
