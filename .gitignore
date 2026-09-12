@@ -3,6 +3,12 @@ tablet-app/**/build/
 tablet-app/.gradle/
 tablet-app/.kotlin/
 tablet-app/local.properties
+tablet-app/keystore.properties
+# Defense in depth: the real signing keystore is generated and stored outside every worktree
+# entirely (Z:/Dev/keystores/vellum-studio/), but these patterns make sure one can never be
+# committed even if a copy ever ends up inside a worktree by mistake.
+*.jks
+*.keystore
 tablet-app/**/.cxx/
 *.apk
 *.aab
