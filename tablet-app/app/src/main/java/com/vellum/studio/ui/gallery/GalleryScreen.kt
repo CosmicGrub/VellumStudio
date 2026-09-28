@@ -186,11 +186,7 @@ private fun EmptyState(modifier: Modifier = Modifier) {
 @Composable
 private fun ProjectCard(project: ProjectSummary, onClick: () -> Unit, onDelete: () -> Unit) {
     var menuOpen by remember { mutableStateOf(false) }
-    Card(
-        onClick = onClick,
-        shape = RoundedCornerShape(16.dp),
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-    ) {
+    val cardBody: @Composable () -> Unit = {
         Column {
             Box(Modifier.fillMaxWidth().aspectRatio(1f).background(MaterialTheme.colorScheme.surfaceVariant)) {
                 ThumbnailImage(project.thumbnailFile, Modifier.fillMaxSize())
@@ -202,11 +198,21 @@ private fun ProjectCard(project: ProjectSummary, onClick: () -> Unit, onDelete: 
             ) {
                 Column(Modifier.weight(1f)) {
                     Text(project.name, style = MaterialTheme.typography.titleMedium, maxLines = 1)
-                    Text(
-                        DateFormat.getDateInstance(DateFormat.MEDIUM).format(Date(project.updatedAt)),
-                        style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
+                    if (project.isOpenable) {
+                        Text(
+                            DateFormat.getDateInstance(DateFormat.MEDIUM).format(Date(project.updatedAt)),
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    } else {
+                        // Saved by a newer build: this one lists it but never opens, migrates or saves it
+                        // (ProjectRepository refuses), so say why the card does nothing when tapped.
+                        Text(
+                            "Made with a newer Vellum Studio \u2013 update to open",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.error,
+                        )
+                    }
                 }
                 Box {
                     IconButton(onClick = { menuOpen = true }) {
@@ -222,6 +228,14 @@ private fun ProjectCard(project: ProjectSummary, onClick: () -> Unit, onDelete: 
                 }
             }
         }
+    }
+    val shape = RoundedCornerShape(16.dp)
+    val colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
+    if (project.isOpenable) {
+        Card(onClick = onClick, shape = shape, colors = colors) { cardBody() }
+    } else {
+        // The non-clickable Card overload (not `enabled = false`, which would grey out the message).
+        Card(shape = shape, colors = colors) { cardBody() }
     }
 }
 

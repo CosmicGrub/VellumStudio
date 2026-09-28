@@ -23,7 +23,7 @@ data class SaveOutcome(val meta: ProjectMeta, val failure: SaveFailure? = null) 
 
 /** Why a save did not happen -- always reported, never thrown at a fire-and-forget caller. */
 class SaveFailure(val kind: Kind, val detail: String?) {
-    enum class Kind { STORAGE_FULL, IO, OUT_OF_MEMORY, UNEXPECTED }
+    enum class Kind { STORAGE_FULL, IO, OUT_OF_MEMORY, NEWER_VERSION, UNEXPECTED }
 
     /** Short, user-facing text for a Snackbar. */
     val userMessage: String
@@ -31,6 +31,7 @@ class SaveFailure(val kind: Kind, val detail: String?) {
             Kind.STORAGE_FULL -> "Couldn't save: storage is full. Free up space, then keep drawing -- your last saved version is safe."
             Kind.IO -> "Couldn't save your project (storage error). Your last saved version is safe."
             Kind.OUT_OF_MEMORY -> "Couldn't save: the device ran low on memory. Your last saved version is safe."
+            Kind.NEWER_VERSION -> "This project was made with a newer version of Vellum Studio, so this version won't overwrite it. Update the app to keep editing."
             Kind.UNEXPECTED -> "Couldn't save your project. Your last saved version is safe."
         }
 }
@@ -183,6 +184,7 @@ internal fun classifyFailure(t: Throwable, storageBytesFree: Long?): SaveFailure
     val msg = generateSequence(t) { it.cause }.mapNotNull { it.message }.joinToString(" | ")
     return when {
         t is OutOfMemoryError -> SaveFailure(SaveFailure.Kind.OUT_OF_MEMORY, t.message)
+        t is ProjectTooNewException -> SaveFailure(SaveFailure.Kind.NEWER_VERSION, t.message)
         t is IOException && (
             msg.contains("ENOSPC", ignoreCase = true) ||
                 msg.contains("No space left", ignoreCase = true) ||

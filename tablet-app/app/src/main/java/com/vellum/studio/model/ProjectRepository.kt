@@ -63,6 +63,13 @@ import java.util.zip.ZipOutputStream
  * that the next save would then write over the only surviving bytes. None of this changes the
  * on-disk format: `.bak`/`.corrupt` are extra sibling files older builds simply ignore, so no schema
  * migration is needed.
+ *
+ * NEWER-SCHEMA REFUSAL: a project whose metadata.json declares a `schemaVersion` above
+ * [ProjectMeta.CURRENT_SCHEMA_VERSION] was written by a newer build (the tablet/Fold device
+ * branches can lag one another on the same hardware). It is listed read-only
+ * ([ProjectSummary.newerSchemaVersion]), and [loadProject], [requestSave] and [renameProject] refuse
+ * it with [ProjectTooNewException] without touching a file -- it is never fed to the "recovery" path
+ * that would replace it with a lossy stand-in. Delete is still allowed: it is the user's explicit act.
  */
 class ProjectRepository internal constructor(private val appContext: Context, private val hooks: SaveHooks) {
 
@@ -162,6 +169,21 @@ class ProjectRepository internal constructor(private val appContext: Context, pr
     private fun thumbFile(id: String) = File(dirFor(id), "thumbnail.png")
 
     /**
+     * What reading one project's metadata found. [TooNew] is deliberately its own case and NOT a
+     * flavor of "unreadable": it is a perfectly good file written by a newer build, and every
+     * fallback below ([decodeLeniently], `.bak`, [recoverFromLayerFiles]) would turn it into a
+     * lossy stand-in that the next save then writes over the real thing.
+     */
+    private sealed interface MetaRead {
+        class Found(val meta: ProjectMeta) : MetaRead
+
+        /** The raw file declared [version] > [ProjectMeta.CURRENT_SCHEMA_VERSION]; the rest is read best-effort for the gallery card only. */
+        class TooNew(val version: Int, val name: String?, val widthPx: Int, val heightPx: Int, val updatedAt: Long?) : MetaRead
+    }
+
+    private fun MetaRead.TooNew.toException() = ProjectTooNewException(version, ProjectMeta.CURRENT_SCHEMA_VERSION)
+
+    /**
      * Reads project [id]'s metadata as defensively as possible, in three widening layers -- each
      * one only kicks in if the layer before it wasn't enough to produce a valid [ProjectMeta]:
      *
@@ -184,28 +206,73 @@ class ProjectRepository internal constructor(private val appContext: Context, pr
      * [recoverFromLayerFiles] can only guess at -- so falling straight to the layer-file rebuild
      * (which sorts by UUID filename and renames the project "Recovered Project") is now the last
      * resort rather than the first.
+     *
+     * A file (metadata.json, or the `.bak` when metadata.json is unusable) whose `schemaVersion` is
+     * NEWER than this build understands short-circuits all of the above as [MetaRead.TooNew]: no
+     * recovery, no fallback to an older `.bak`, and nothing here ever writes -- reading is
+     * byte-for-byte non-destructive, which is what lets the caller refuse cleanly.
      */
-    private fun loadOrRecoverMeta(id: String): ProjectMeta? {
+    private fun loadOrRecoverMeta(id: String): MetaRead? {
         val mf = metaFile(id)
         readMetaFile(id, mf)?.let { return it }
         readMetaFile(id, DurableFile.bakFor(mf))?.let {
-            DiagnosticLog.log(appContext, "ProjectRepository", "Project $id: metadata.json missing or unreadable; restored from metadata.json.bak")
+            if (it is MetaRead.Found) DiagnosticLog.log(appContext, "ProjectRepository", "Project $id: metadata.json missing or unreadable; restored from metadata.json.bak")
             return it
         }
-        return recoverFromLayerFiles(id)
+        return recoverFromLayerFiles(id)?.let { MetaRead.Found(it) }
     }
 
     /** Parses+migrates+decodes one metadata file (layers 1 and 2 above); null if it's absent or not parseable JSON. */
-    private fun readMetaFile(id: String, file: File): ProjectMeta? {
+    private fun readMetaFile(id: String, file: File): MetaRead? {
         if (!file.exists()) return null
-        return runCatching {
+        return try {
             val root = json.parseToJsonElement(file.readText()).jsonObject
-            val migrated = ProjectSchemaMigrator.migrate(root)
-            runCatching { json.decodeFromJsonElement<ProjectMeta>(migrated) }
-                .getOrElse { decodeLeniently(id, migrated) }
-        }.getOrElse { e ->
+            val migrated = try {
+                ProjectSchemaMigrator.migrate(root)
+            } catch (e: ProjectTooNewException) {
+                DiagnosticLog.log(appContext, "ProjectRepository", "Project $id: ${file.name} is schema v${e.projectVersion}, newer than this build's v${e.supportedVersion}; refusing to open or overwrite it")
+                return newerSchemaPreview(e.projectVersion, root)
+            }
+            MetaRead.Found(
+                runCatching { json.decodeFromJsonElement<ProjectMeta>(migrated) }
+                    .getOrElse { decodeLeniently(id, migrated) },
+            )
+        } catch (e: Exception) {
             DiagnosticLog.log(appContext, "ProjectRepository", "${file.name} unreadable for project $id (${e.message})")
             null
+        }
+    }
+
+    /** The few display fields of a newer-schema file, tolerantly and without decoding it into [ProjectMeta]. */
+    private fun newerSchemaPreview(version: Int, root: JsonObject): MetaRead.TooNew {
+        fun prim(key: String) = root[key] as? JsonPrimitive
+        return MetaRead.TooNew(
+            version = version,
+            name = prim("name")?.contentOrNull?.takeIf { it.isNotBlank() },
+            widthPx = prim("widthPx")?.intOrNull ?: 0,
+            heightPx = prim("heightPx")?.intOrNull ?: 0,
+            updatedAt = prim("updatedAt")?.longOrNull,
+        )
+    }
+
+    /**
+     * Throws [ProjectTooNewException] if what is on disk for [id] was written by a newer build.
+     * The write paths call this under the project lock BEFORE touching a single file: a project that
+     * loaded fine can still be replaced underneath us (a newer build side-loaded on the same
+     * hardware saving over it), and overwriting that with this build's older shape is exactly the
+     * loss the refusal exists to prevent. Same precedence as reading: metadata.json decides if it
+     * parses, otherwise the `.bak`. Absent/unparseable files pass -- there is nothing newer to protect.
+     */
+    private fun requireNotNewerOnDisk(id: String) {
+        val mf = metaFile(id)
+        for (file in listOf(mf, DurableFile.bakFor(mf))) {
+            if (!file.exists()) continue
+            val version = runCatching { ProjectSchemaMigrator.versionOf(json.parseToJsonElement(file.readText()).jsonObject) }.getOrNull() ?: continue
+            if (version > ProjectMeta.CURRENT_SCHEMA_VERSION) {
+                DiagnosticLog.log(appContext, "ProjectRepository", "Project $id: refusing to write; ${file.name} is schema v$version, newer than this build's v${ProjectMeta.CURRENT_SCHEMA_VERSION}")
+                throw ProjectTooNewException(version, ProjectMeta.CURRENT_SCHEMA_VERSION)
+            }
+            return
         }
     }
 
@@ -241,7 +308,7 @@ class ProjectRepository internal constructor(private val appContext: Context, pr
                     name = "Recovered Layer",
                     opacity = 1f,
                     visible = true,
-                    blendMode = LayerBlendMode.NORMAL.label,
+                    blendMode = LayerBlendMode.NORMAL.wireName,
                     order = decodedLayers.size + i,
                 )
             }
@@ -273,7 +340,7 @@ class ProjectRepository internal constructor(private val appContext: Context, pr
         val dim = files.firstNotNullOfOrNull { peekPngDimensions(it) } ?: return null
         DiagnosticLog.log(appContext, "ProjectRepository", "Rebuilding project $id from ${files.size} orphaned layer file(s); metadata.json was missing or unreadable")
         val layers = files.mapIndexed { i, f ->
-            LayerMeta(id = f.nameWithoutExtension, name = "Recovered Layer ${i + 1}", opacity = 1f, visible = true, blendMode = LayerBlendMode.NORMAL.label, order = i)
+            LayerMeta(id = f.nameWithoutExtension, name = "Recovered Layer ${i + 1}", opacity = 1f, visible = true, blendMode = LayerBlendMode.NORMAL.wireName, order = i)
         }
         val now = System.currentTimeMillis()
         return ProjectMeta(
@@ -300,8 +367,24 @@ class ProjectRepository internal constructor(private val appContext: Context, pr
     suspend fun listProjects(): List<ProjectSummary> = withContext(Dispatchers.IO) {
         val dirs = projectsRoot.listFiles { f -> f.isDirectory } ?: emptyArray()
         dirs.mapNotNull { dir ->
-            val meta = loadOrRecoverMeta(dir.name) ?: return@mapNotNull null
-            ProjectSummary(meta.id, meta.name, meta.widthPx, meta.heightPx, meta.updatedAt, thumbFile(meta.id).takeIf { it.exists() })
+            when (val read = loadOrRecoverMeta(dir.name)) {
+                null -> null
+                is MetaRead.Found -> {
+                    val meta = read.meta
+                    ProjectSummary(meta.id, meta.name, meta.widthPx, meta.heightPx, meta.updatedAt, thumbFile(meta.id).takeIf { it.exists() })
+                }
+                // Listed (so the user can see it exists and delete it) but flagged read-only; the id is
+                // the directory name because that is what every path here is built from.
+                is MetaRead.TooNew -> ProjectSummary(
+                    id = dir.name,
+                    name = read.name ?: "Untitled",
+                    widthPx = read.widthPx,
+                    heightPx = read.heightPx,
+                    updatedAt = read.updatedAt ?: metaFile(dir.name).lastModified(),
+                    thumbnailFile = thumbFile(dir.name).takeIf { it.exists() },
+                    newerSchemaVersion = read.version,
+                )
+            }
         }.sortedByDescending { it.updatedAt }
     }
 
@@ -317,7 +400,7 @@ class ProjectRepository internal constructor(private val appContext: Context, pr
             heightPx = heightPx,
             createdAt = now,
             updatedAt = now,
-            layers = engine.layers.mapIndexed { i, l -> LayerMeta(l.id, l.name, l.opacity, l.visible, l.blendMode.label, i, l.locked, l.isReferenceImage) },
+            layers = engine.layers.mapIndexed { i, l -> l.toMeta(i) },
             activeLayerIndex = engine.activeLayerIndex,
             schemaVersion = ProjectMeta.CURRENT_SCHEMA_VERSION,
         )
@@ -350,7 +433,7 @@ class ProjectRepository internal constructor(private val appContext: Context, pr
             heightPx = canvasSize,
             createdAt = now,
             updatedAt = now,
-            layers = engine.layers.mapIndexed { i, l -> LayerMeta(l.id, l.name, l.opacity, l.visible, l.blendMode.label, i, l.locked, l.isReferenceImage) },
+            layers = engine.layers.mapIndexed { i, l -> l.toMeta(i) },
             activeLayerIndex = engine.activeLayerIndex,
             schemaVersion = ProjectMeta.CURRENT_SCHEMA_VERSION,
             // Stamped for every template-created project, bundled or user-photo-backed alike --
@@ -370,7 +453,9 @@ class ProjectRepository internal constructor(private val appContext: Context, pr
      */
     suspend fun findProjectBySourceTemplateId(templateId: String): String? = withContext(Dispatchers.IO) {
         val dirs = projectsRoot.listFiles { f -> f.isDirectory } ?: emptyArray()
-        dirs.firstNotNullOfOrNull { dir -> loadOrRecoverMeta(dir.name)?.takeIf { it.sourceTemplateId == templateId }?.id }
+        // A newer-schema project is skipped (its template link is not something this build can trust
+        // to read); it is not opened either way, so a repeat tap makes a fresh project instead.
+        dirs.firstNotNullOfOrNull { dir -> (loadOrRecoverMeta(dir.name) as? MetaRead.Found)?.meta?.takeIf { it.sourceTemplateId == templateId }?.id }
     }
 
     /**
@@ -405,6 +490,7 @@ class ProjectRepository internal constructor(private val appContext: Context, pr
         val quarantinedLayerNames: List<String>,
     )
 
+    /** @throws ProjectTooNewException if the project was saved by a newer build (nothing on disk is touched). */
     suspend fun loadProject(id: String): Pair<ProjectMeta, CanvasEngine>? =
         loadProjectReporting(id)?.let { it.meta to it.engine }
 
@@ -412,13 +498,21 @@ class ProjectRepository internal constructor(private val appContext: Context, pr
      * [loadProject] plus a report of anything quarantined. Runs under the project lock so it can
      * never observe (or rename files out from under) a save that is mid-flight from the previous
      * editor session.
+     *
+     * @throws ProjectTooNewException if the project's metadata.json declares a schema newer than
+     *   this build understands. Thrown before anything is swept, renamed or created in the project
+     *   directory, so a refused project stays byte-for-byte as the newer build left it.
      */
     suspend fun loadProjectReporting(id: String): LoadedProject? = withContext(Dispatchers.IO) {
         coordinator.withProjectLock(id) { loadBlocking(id) }
     }
 
     private fun loadBlocking(id: String): LoadedProject? {
-        val meta = loadOrRecoverMeta(id) ?: return null
+        val meta = when (val read = loadOrRecoverMeta(id)) {
+            null -> return null
+            is MetaRead.TooNew -> throw read.toException()
+            is MetaRead.Found -> read.meta
+        }
         val state = coordinator.stateFor(id)
         val ldir = layersDir(id)
         // An interrupted save's leftovers; the lock is held, so nothing is writing one right now.
@@ -448,16 +542,9 @@ class ProjectRepository internal constructor(private val appContext: Context, pr
                 DiagnosticLog.log(appContext, "ProjectRepository", "Project $id: layer file for '${lm.name}' (${lm.id}) is missing; opening it blank")
             }
             val bmp = decoded ?: Bitmap.createBitmap(meta.widthPx, meta.heightPx, Bitmap.Config.ARGB_8888)
-            val layer = Layer(
-                id = lm.id,
-                name = lm.name,
-                bitmap = bmp,
-                opacity = lm.opacity,
-                visible = lm.visible,
-                blendMode = LayerBlendMode.fromLabel(lm.blendMode),
-                locked = lm.locked,
-                isReferenceImage = lm.isReferenceImage,
-            )
+            val layer = lm.toLayer(bmp) { unknown ->
+                DiagnosticLog.log(appContext, "ProjectRepository", "Project $id: layer '${lm.name}' has unknown blend mode \"$unknown\"; opening it as Normal")
+            }
             engine.layers.add(layer)
             // Only a layer that really came off disk counts as "already saved at this version"; a
             // blank stand-in must stay dirty so the next save writes a real file for it.
@@ -523,7 +610,7 @@ class ProjectRepository internal constructor(private val appContext: Context, pr
         val layers = engine.layers.toList()
         val updated = meta.copy(
             updatedAt = System.currentTimeMillis(),
-            layers = layers.mapIndexed { i, l -> LayerMeta(l.id, l.name, l.opacity, l.visible, l.blendMode.label, i, l.locked, l.isReferenceImage) },
+            layers = layers.mapIndexed { i, l -> l.toMeta(i) },
             activeLayerIndex = engine.activeLayerIndex,
         )
         val (thumbW, thumbH) = thumbSize(engine.widthPx, engine.heightPx)
@@ -554,6 +641,9 @@ class ProjectRepository internal constructor(private val appContext: Context, pr
     /** Runs on the coordinator's IO thread, under the project lock. Any exception becomes a failed [SaveOutcome] upstream. */
     private fun runSave(state: ProjectState, plan: SavePlan): SaveOutcome {
         val meta = plan.meta
+        // Before ANY file is touched (layer PNGs of a newer project would be overwritten too, not
+        // just its metadata): refuse to save over a project a newer build wrote.
+        requireNotNewerOnDisk(meta.id)
         dirFor(meta.id).mkdirs()
         val ldir = layersDir(meta.id)
 
@@ -656,9 +746,11 @@ class ProjectRepository internal constructor(private val appContext: Context, pr
         return outcome.meta
     }
 
+    /** @throws ProjectTooNewException if the project on disk was saved by a newer build (it is left untouched). */
     suspend fun renameProject(meta: ProjectMeta, newName: String): ProjectMeta = withContext(Dispatchers.IO) {
         val updated = meta.copy(name = newName, updatedAt = System.currentTimeMillis())
         coordinator.withProjectLock(updated.id) {
+            requireNotNewerOnDisk(updated.id)
             DurableFile.writeText(metaFile(updated.id), json.encodeToString(updated), keepBackup = true, backupIsValid = ::isParseableMeta)
         }
         libraryChanged()

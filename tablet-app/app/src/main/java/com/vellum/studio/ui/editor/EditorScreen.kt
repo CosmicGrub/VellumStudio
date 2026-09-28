@@ -88,6 +88,7 @@ import androidx.compose.ui.input.key.type
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.compose.ui.window.Dialog
@@ -102,6 +103,7 @@ import com.vellum.studio.model.EditorAutosaver
 import com.vellum.studio.model.PaletteRepository
 import com.vellum.studio.model.ProjectMeta
 import com.vellum.studio.model.ProjectRepository
+import com.vellum.studio.model.ProjectTooNewException
 import com.vellum.studio.model.RecentColors
 import com.vellum.studio.model.SaveReason
 import com.vellum.studio.model.SaveStatus
@@ -152,6 +154,10 @@ fun EditorScreen(
     var meta by remember { mutableStateOf<ProjectMeta?>(null) }
     var engine by remember { mutableStateOf<CanvasEngine?>(null) }
     var loading by remember { mutableStateOf(true) }
+    // Non-null when the project was refused because a newer build saved it (ProjectTooNewException);
+    // shown instead of the canvas. The gallery already blocks tapping such a card, so this is the
+    // defensive path for any other way in (a stale route, a template that resolved to it).
+    var refusalMessage by remember { mutableStateOf<String?>(null) }
     var layersPanelOpen by remember { mutableStateOf(false) }
     var colorPickerOpen by remember { mutableStateOf(false) }
     var printPresetDialogOpen by remember { mutableStateOf(false) }
@@ -316,7 +322,12 @@ fun EditorScreen(
 
     LaunchedEffect(projectId) {
         loading = true
-        val loaded = repository.loadProjectReporting(projectId)
+        val loaded = try {
+            repository.loadProjectReporting(projectId)
+        } catch (e: ProjectTooNewException) {
+            refusalMessage = e.userMessage
+            null
+        }
         if (loaded != null) {
             meta = loaded.meta
             autosaver = repository.openAutosaver(loaded.meta, loaded.engine)
@@ -519,6 +530,12 @@ fun EditorScreen(
     ) { padding ->
         Box(Modifier.fillMaxSize().padding(padding)) {
             when {
+                refusalMessage != null -> Text(
+                    refusalMessage!!,
+                    style = MaterialTheme.typography.bodyLarge,
+                    textAlign = TextAlign.Center,
+                    modifier = Modifier.align(Alignment.Center).padding(32.dp),
+                )
                 loading || engine == null -> CircularProgressIndicator(Modifier.align(Alignment.Center))
                 else -> {
                     val eng = engine!!

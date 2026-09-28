@@ -1,5 +1,8 @@
 package com.vellum.studio.model
 
+import android.graphics.Bitmap
+import com.vellum.studio.canvas.Layer
+import com.vellum.studio.canvas.LayerBlendMode
 import com.vellum.studio.util.DeviceCapabilities
 import kotlinx.serialization.EncodeDefault
 import kotlinx.serialization.ExperimentalSerializationApi
@@ -21,6 +24,34 @@ data class LayerMeta(
     // See Layer.isReferenceImage's own doc for what this drives (the Pose Reference Overlay's
     // "Show Pose Guide" entry point in LayersPanel).
     val isReferenceImage: Boolean = false,
+)
+
+/**
+ * The ONE place a live [Layer] becomes its on-disk record (and [toLayer] the one place back).
+ * Every save path -- create, create-from-template, the durable save capture -- and the load path go
+ * through these, so a per-layer field added later cannot be persisted on one path and dropped on
+ * another, and the blend mode is only ever converted through [LayerBlendMode.wireName] here.
+ */
+fun Layer.toMeta(order: Int): LayerMeta =
+    LayerMeta(id, name, opacity, visible, blendMode.wireName, order, locked, isReferenceImage)
+
+/**
+ * Rebuilds a [Layer] around [bitmap] from this record. A blend mode string no mode has ever used
+ * falls back to Normal (the layer still opens) but is reported to [onUnknownBlendMode] so the
+ * caller can log it instead of the reset being silent.
+ */
+fun LayerMeta.toLayer(bitmap: Bitmap, onUnknownBlendMode: (String) -> Unit = {}): Layer = Layer(
+    id = id,
+    name = name,
+    bitmap = bitmap,
+    opacity = opacity,
+    visible = visible,
+    blendMode = LayerBlendMode.fromWireName(blendMode) ?: run {
+        onUnknownBlendMode(blendMode)
+        LayerBlendMode.NORMAL
+    },
+    locked = locked,
+    isReferenceImage = isReferenceImage,
 )
 
 /** On-disk project record. Layer pixel data lives alongside as `layers/<id>.png`, not inline here. */
@@ -73,7 +104,14 @@ data class ProjectMeta(
     }
 }
 
-/** Lightweight row for the gallery grid — no bitmaps loaded until a project is actually opened. */
+/**
+ * Lightweight row for the gallery grid — no bitmaps loaded until a project is actually opened.
+ *
+ * [newerSchemaVersion] is non-null for a project whose metadata.json was written by a NEWER build
+ * (its `schemaVersion` is above [ProjectMeta.CURRENT_SCHEMA_VERSION]): this build can list it but
+ * must not open, migrate or save it. [name]/[widthPx]/[heightPx]/[updatedAt] are then read
+ * best-effort from the raw file without decoding it, purely so the card can be recognizable.
+ */
 data class ProjectSummary(
     val id: String,
     val name: String,
@@ -81,7 +119,11 @@ data class ProjectSummary(
     val heightPx: Int,
     val updatedAt: Long,
     val thumbnailFile: File?,
-)
+    val newerSchemaVersion: Int? = null,
+) {
+    /** False for a project this build refuses to open (see [newerSchemaVersion]). */
+    val isOpenable: Boolean get() = newerSchemaVersion == null
+}
 
 /** A named starting size for the "New Canvas" dialog. */
 data class CanvasSizePreset(val label: String, val widthPx: Int, val heightPx: Int)
