@@ -1,0 +1,9 @@
+#!/usr/bin/env bash
+# Pre-push gate: the FAST subset of scripts/verify.sh (frozen files, gate self-tests, README counts,
+# unit tests). The full gate (lint + R8 release build + apk assertions) is slower and is run by hand
+# before shipping: bash scripts/verify.sh
+#
+# Enable once per clone (all worktrees of a clone share it):  bash scripts/install-hooks.sh
+# Bypass in an emergency with `git push --no-verify` -- and run the gate afterwards.
+root="$(git rev-parse --show-toplevel)" || exit 1
+exec bash "$root/scripts/verify.sh" --fast
