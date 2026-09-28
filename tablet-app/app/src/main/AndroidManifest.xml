@@ -32,10 +32,19 @@
              is already 29, the same level this element itself requires. -->
         <profileable android:shell="true" />
 
+        <!-- configChanges: every configuration change this Activity is expected to see mid-session
+             is handled in place instead of recreating it. A recreate reloads the editor from disk
+             and silently drops any strokes/undo history that hadn't been saved yet, so the list
+             must cover what a real tablet session actually triggers: attaching/detaching the Book
+             Cover Keyboard (keyboard, navigation -- keyboardHidden alone does NOT cover this; the
+             app registers keyboard shortcuts specifically for that accessory), changing the system
+             font size (fontScale), switching the system language (locale, layoutDirection), and
+             fold/resize/rotation/dark-mode changes. Compose re-reads LocalConfiguration on each of
+             these, so no manual handling is needed. -->
         <activity
             android:name=".MainActivity"
             android:exported="true"
-            android:configChanges="orientation|screenSize|screenLayout|keyboardHidden|smallestScreenSize|density|uiMode"
+            android:configChanges="orientation|screenSize|screenLayout|keyboard|keyboardHidden|navigation|smallestScreenSize|density|uiMode|fontScale|locale|layoutDirection"
             android:theme="@style/Theme.VellumStudio.Splash"
             android:windowSoftInputMode="adjustResize">
             <intent-filter>
