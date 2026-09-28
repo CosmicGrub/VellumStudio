@@ -36,6 +36,7 @@ import androidx.compose.material.icons.filled.Balance
 import androidx.compose.material.icons.filled.Brush
 import androidx.compose.material.icons.filled.CenterFocusWeak
 import androidx.compose.material.icons.filled.CropFree
+import androidx.compose.material.icons.filled.Deselect
 import androidx.compose.material.icons.filled.FormatColorFill
 import androidx.compose.material.icons.filled.IosShare
 import androidx.compose.material.icons.filled.Layers
@@ -200,20 +201,16 @@ fun EditorScreen(
     // up) -- doUndo/doRedo/adjustBrushSize/setOpacityFromDigit are plain functions rather than
     // being inlined into handleKeyShortcut so the top bar's Undo/Redo IconButtons can call the
     // exact same logic a keyboard shortcut does, instead of two copies of it drifting apart. ---
+    // The mid-stroke guard lives in CanvasEngine.undo()/redo() (see there for why), so the buttons
+    // and Ctrl+Z/Y all inherit it; the buttons are additionally disabled while strokeActive.
     fun doUndo() {
         val e = engine ?: return
-        if (!e.undoManager.canUndo) return
-        e.undoManager.undo { id -> e.layers.firstOrNull { it.id == id } }
-        e.bumpRevision()
-        undoRedoTick++
+        if (e.undo()) undoRedoTick++
     }
 
     fun doRedo() {
         val e = engine ?: return
-        if (!e.undoManager.canRedo) return
-        e.undoManager.redo { id -> e.layers.firstOrNull { it.id == id } }
-        e.bumpRevision()
-        undoRedoTick++
+        if (e.redo()) undoRedoTick++
     }
 
     fun adjustBrushSize(delta: Float) {
@@ -331,11 +328,11 @@ fun EditorScreen(
                 actions = {
                     IconButton(
                         onClick = ::doUndo,
-                        enabled = eng?.undoManager?.canUndo == true,
+                        enabled = eng?.undoManager?.canUndo == true && !strokeActive,
                     ) { Icon(Icons.AutoMirrored.Filled.Undo, contentDescription = "Undo") }
                     IconButton(
                         onClick = ::doRedo,
-                        enabled = eng?.undoManager?.canRedo == true,
+                        enabled = eng?.undoManager?.canRedo == true && !strokeActive,
                     ) { Icon(Icons.AutoMirrored.Filled.Redo, contentDescription = "Redo") }
 
                     if (eng != null) {
@@ -373,6 +370,12 @@ fun EditorScreen(
                                     text = { Text("Select (move pixels)") },
                                     leadingIcon = { Icon(Icons.Filled.CropFree, contentDescription = null) },
                                     onClick = { eng.currentTool = ToolMode.SELECT; toolMenuOpen = false },
+                                )
+                                DropdownMenuItem(
+                                    text = { Text("Deselect") },
+                                    leadingIcon = { Icon(Icons.Filled.Deselect, contentDescription = null) },
+                                    enabled = eng.selectionRect != null,
+                                    onClick = { eng.deselect(); toolMenuOpen = false },
                                 )
                             }
                         }

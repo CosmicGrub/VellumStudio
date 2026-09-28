@@ -15,6 +15,7 @@ import android.view.MotionEvent
 import android.view.View
 import com.vellum.studio.VellumApp
 import kotlin.math.PI
+import kotlin.math.abs
 import kotlin.math.atan2
 import kotlin.math.floor
 import kotlin.math.hypot
@@ -388,9 +389,14 @@ class DrawingCanvasView @JvmOverloads constructor(
             eng.poseGuide?.let { drawPoseGuide(canvas, it) }
         }
 
-        eng.selectionRect?.let { rect ->
-            selectionPaint.strokeWidth = 2f / currentScale()
-            canvas.drawRect(rect, selectionPaint)
+        // SELECT only: the marquee used to draw in every tool and read as an active clip region
+        // while brushing (brush strokes never consult it). CanvasEngine.currentTool also clears
+        // the rect on leaving SELECT; this gate is the draw-side half so a stale one can't show.
+        if (eng.currentTool == ToolMode.SELECT) {
+            eng.selectionRect?.let { rect ->
+                selectionPaint.strokeWidth = 2f / currentScale()
+                canvas.drawRect(rect, selectionPaint)
+            }
         }
 
         // Hidden the instant a real stroke owns input (strokePointerId != -1) -- once ink is
@@ -752,7 +758,17 @@ class DrawingCanvasView @JvmOverloads constructor(
             return
         }
         if (wasMoving && originalRect != null) {
-            commitSelectionMove(eng, originalRect, rect)
+            // A tap inside the rect is a zero-distance "move". Committing it would snapshot the
+            // whole layer twice and burn an undo slot for a no-op (depth can be as low as 6, so a
+            // handful of stray taps evicted the real history). Keep the rect exactly where it was
+            // (not the sub-pixel-drifted copy) and push nothing.
+            if (abs(rect.left - originalRect.left) < SELECTION_MOVE_EPSILON_PX &&
+                abs(rect.top - originalRect.top) < SELECTION_MOVE_EPSILON_PX
+            ) {
+                eng.selectionRect = originalRect
+            } else {
+                commitSelectionMove(eng, originalRect, rect)
+            }
         }
         invalidate()
     }
@@ -1139,6 +1155,11 @@ class DrawingCanvasView @JvmOverloads constructor(
     companion object {
         private const val MIN_ZOOM = 0.05f
         private const val MAX_ZOOM = 40f
+
+        // Canvas px below which a selection "move" counts as a tap (see endSelectionGesture).
+        // Half a pixel: a real drag at any zoom moves at least a whole canvas pixel, while stylus
+        // jitter on a tap stays far under it.
+        private const val SELECTION_MOVE_EPSILON_PX = 0.5f
 
         // Safety cap on Smart Shape Assist's parallel point capture (see shapeAssistPoints) -- a
         // very long, slow drag shouldn't grow this list unboundedly. Recognition doesn't need

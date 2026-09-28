@@ -31,7 +31,19 @@ enum class ToolMode { BRUSH, FILL, PAINT_BY_NUMBER, SELECT }
 class CanvasEngine(val widthPx: Int, val heightPx: Int) {
 
     val layers: SnapshotStateList<Layer> = mutableListOf<Layer>().toMutableStateList()
-    var activeLayerIndex by mutableIntStateOf(0)
+
+    // Private backing state + explicit accessors (not `by mutableIntStateOf` with a custom set):
+    // a delegated var can't carry a setter that touches a backing field, see SettingsRepository.
+    // Any real change of the active layer drops the marquee -- selectionRect is a region on ONE
+    // layer's pixels, and a later drag would otherwise commit against whichever layer happens to be
+    // active by then (the stale-marquee-on-the-wrong-layer defect this guards).
+    private val activeLayerIndexState = mutableIntStateOf(0)
+    var activeLayerIndex: Int
+        get() = activeLayerIndexState.intValue
+        set(value) {
+            if (value != activeLayerIndexState.intValue) selectionRect = null
+            activeLayerIndexState.intValue = value
+        }
 
     var currentBrush by mutableStateOf(BrushPresets.Pencil)
     var currentColorArgb by mutableIntStateOf(Color.BLACK)
@@ -54,7 +66,16 @@ class CanvasEngine(val widthPx: Int, val heightPx: Int) {
         get() = opacityMultipliers[currentBrush.id] ?: 1f
         set(value) { opacityMultipliers[currentBrush.id] = value }
 
-    var currentTool by mutableStateOf(ToolMode.BRUSH)
+    // Same private-backing-state pattern as activeLayerIndex above. Leaving SELECT drops the
+    // marquee: it is only drawn/meaningful in SELECT, and a lingering one read as an active clip
+    // region while drawing with the brush (it never was one -- brush strokes ignore it).
+    private val currentToolState = mutableStateOf(ToolMode.BRUSH)
+    var currentTool: ToolMode
+        get() = currentToolState.value
+        set(value) {
+            if (value != ToolMode.SELECT) selectionRect = null
+            currentToolState.value = value
+        }
 
     /** See [SymmetryMode] -- while not NONE, DrawingCanvasView stamps every dab at its mirrored/
      * rotated position(s) too, live, alongside the real stroke. */
@@ -89,6 +110,12 @@ class CanvasEngine(val widthPx: Int, val heightPx: Int) {
      * active selection. DrawingCanvasView owns the actual drag gesture that defines/moves it.
      */
     var selectionRect by mutableStateOf<RectF?>(null)
+
+    /** Explicit Deselect (the tool menu's action) -- before this the only way to drop a selection
+     * was a stylus tap outside it, which also starts defining a new one. */
+    fun deselect() {
+        selectionRect = null
+    }
 
     /**
      * Cached region map for paint-by-number mode; recomputed lazily, see [regionsForPaintByNumber].
@@ -138,6 +165,34 @@ class CanvasEngine(val widthPx: Int, val heightPx: Int) {
         private set
 
     fun activeLayer(): Layer? = layers.getOrNull(activeLayerIndex)
+
+    /**
+     * Undo/redo the top history step. Ignored (returns false, history untouched) while a stylus
+     * stroke is in flight: [UndoManager] restores bitmaps straight onto the live layer, which is the
+     * very bitmap the stroke is still drawing into. For scratch-based brushes that made the stroke's
+     * commit snapshot (its "before") still contain the previous stroke, so undoing it later
+     * resurrected that stroke; for buildUp brushes the restore wiped the in-flight dabs. A second
+     * pointer (a finger on the top-bar button, or Ctrl+Z from a Bluetooth keyboard) can reach this
+     * mid-stroke -- stylus-only palm rejection only covers touches that hit DrawingCanvasView --
+     * hence the same guard delete/move/print/export carry, at the engine so every caller gets it.
+     * Also drops the marquee: it describes pixels that just moved back.
+     */
+    fun undo(): Boolean {
+        if (strokeInProgressLayerId != null || !undoManager.canUndo) return false
+        undoManager.undo { id -> layers.firstOrNull { it.id == id } }
+        selectionRect = null
+        bumpRevision()
+        return true
+    }
+
+    /** See [undo] -- identical guard and side effects for the redo direction. */
+    fun redo(): Boolean {
+        if (strokeInProgressLayerId != null || !undoManager.canRedo) return false
+        undoManager.redo { id -> layers.firstOrNull { it.id == id } }
+        selectionRect = null
+        bumpRevision()
+        return true
+    }
 
     fun addLayer(name: String? = null, aboveActive: Boolean = true): Layer {
         val bmp = Bitmap.createBitmap(widthPx, heightPx, Bitmap.Config.ARGB_8888)
