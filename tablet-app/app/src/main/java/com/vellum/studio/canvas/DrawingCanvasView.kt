@@ -15,6 +15,8 @@ import android.util.AttributeSet
 import android.view.MotionEvent
 import android.view.View
 import com.vellum.studio.VellumApp
+import com.vellum.studio.util.TraceSections
+import com.vellum.studio.util.trace
 import kotlin.math.PI
 import kotlin.math.abs
 import kotlin.math.atan2
@@ -594,7 +596,7 @@ class DrawingCanvasView @JvmOverloads constructor(
      * comes from whichever numbered region was tapped (see [CanvasEngine.regionsForPaintByNumber])
      * instead of the user's currently selected color — that's the whole mechanic.
      */
-    private fun performFill(eng: CanvasEngine, event: MotionEvent, idx: Int) {
+    private fun performFill(eng: CanvasEngine, event: MotionEvent, idx: Int) = trace(TraceSections.FILL_PERFORM) {
         val layer = eng.activeLayer() ?: return
         if (layer.locked) return
 
@@ -841,7 +843,7 @@ class DrawingCanvasView @JvmOverloads constructor(
         return padAndClampDirtyRect(eng, brush, strokeDirtyUnion)
     }
 
-    private fun startStroke(eng: CanvasEngine, event: MotionEvent, idx: Int) {
+    private fun startStroke(eng: CanvasEngine, event: MotionEvent, idx: Int) = trace(TraceSections.STROKE_DOWN) {
         val layer = eng.activeLayer() ?: return
         if (layer.locked) return
 
@@ -904,7 +906,7 @@ class DrawingCanvasView @JvmOverloads constructor(
         if (capturingShapeAssist) shapeAssistPoints.add(PointF(sample.x, sample.y))
     }
 
-    private fun moveStroke(event: MotionEvent) {
+    private fun moveStroke(event: MotionEvent) = trace(TraceSections.STROKE_MOVE) {
         val renderer = strokeRenderer ?: return
         val target = strokeTargetCanvas ?: return
         val idx = event.findPointerIndex(strokePointerId)
@@ -955,7 +957,7 @@ class DrawingCanvasView @JvmOverloads constructor(
         }
     }
 
-    private fun endStroke() {
+    private fun endStroke() = trace(TraceSections.STROKE_COMMIT) {
         val eng = engine
         val layer = strokeTargetLayer
         val renderer = strokeRenderer

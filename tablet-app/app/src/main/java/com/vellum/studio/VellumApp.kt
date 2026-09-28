@@ -1,6 +1,7 @@
 package com.vellum.studio
 
 import android.app.Application
+import android.os.StrictMode
 import com.vellum.studio.academy.AcademyProgressRepository
 import com.vellum.studio.model.CustomBrushRepository
 import com.vellum.studio.model.PaletteRepository
@@ -30,6 +31,7 @@ class VellumApp : Application() {
     override fun onCreate() {
         super.onCreate()
         instance = this
+        installStrictModeIfDebug()
         // Installed before anything else so a crash during the rest of this method's own
         // initialization (repositories are lazy, but a bad first touch of one would still land
         // here) is captured too.
@@ -43,6 +45,33 @@ class VellumApp : Application() {
             runCatching { repository.purgeExpiredTrash() }
                 .onFailure { DiagnosticLog.log(this@VellumApp, "Lifecycle", "Trash purge failed: ${it.javaClass.simpleName}: ${it.message}") }
         }
+    }
+
+    /**
+     * DEBUG-build-only developer diagnostics: flags disk reads/writes on the main thread and leaked
+     * Closeable/SQLite objects, both LOGGED (`penaltyLog()`), never `penaltyDeath()` -- this is meant
+     * to surface a jank-causing main-thread file read in Logcat during development, not to crash a
+     * release build (or a debug build mid-demo) over something that was already shipping fine. A
+     * release build never even calls [StrictMode.setThreadPolicy]/[StrictMode.setVmPolicy], so it
+     * costs nothing there; `BuildConfig.DEBUG` is the same gate [UndoManager]'s crop-based-undo
+     * correctness net uses for the same "on for every real dev/test run, off in what ships" reason.
+     */
+    private fun installStrictModeIfDebug() {
+        if (!BuildConfig.DEBUG) return
+        StrictMode.setThreadPolicy(
+            StrictMode.ThreadPolicy.Builder()
+                .detectDiskReads()
+                .detectDiskWrites()
+                .penaltyLog()
+                .build()
+        )
+        StrictMode.setVmPolicy(
+            StrictMode.VmPolicy.Builder()
+                .detectLeakedSqlLiteObjects()
+                .detectLeakedClosableObjects()
+                .penaltyLog()
+                .build()
+        )
     }
 
     /**

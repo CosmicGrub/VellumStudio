@@ -6,6 +6,8 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import com.vellum.studio.BuildConfig
+import com.vellum.studio.util.TraceSections
+import com.vellum.studio.util.trace
 
 /**
  * What the structural undo steps need from the engine that owns the layer stack. [UndoManager]
@@ -72,13 +74,13 @@ internal class PixelEdit(val layerId: String, val rect: Rect, val before: Bitmap
 
     override fun undo(findLayer: (String) -> Layer?, host: LayerStackHost?): Boolean {
         val layer = findLayer(layerId) ?: return false
-        layer.restoreRect(rect, before)
+        trace(TraceSections.LAYER_RESTORE) { layer.restoreRect(rect, before) }
         return true
     }
 
     override fun redo(findLayer: (String) -> Layer?, host: LayerStackHost?): Boolean {
         val layer = findLayer(layerId) ?: return false
-        layer.restoreRect(rect, after)
+        trace(TraceSections.LAYER_RESTORE) { layer.restoreRect(rect, after) }
         return true
     }
 
@@ -382,7 +384,7 @@ class UndoManager(
 
         /** Call on ACTION_CANCEL to revert whatever partial drawing already hit the layer bitmap. */
         fun rollback(layer: Layer) {
-            layer.restore(before)
+            trace(TraceSections.LAYER_RESTORE) { layer.restore(before) }
             before.recycle()
         }
     }
