@@ -152,6 +152,25 @@ class ProjectTrashTest {
     }
 
     @Test
+    fun `delete, restore, delete again within the same millisecond still yields two distinct trash entries`() = runBlocking {
+        // A real risk this file's OWN real-clock test above only hits by luck: a fast CI runner
+        // completing delete, restore and delete again inside one millisecond. Caught exactly this way
+        // on GitHub Actions (never locally) before lastTrashStamp existed: the restore vacates the
+        // first stamp's folder, so the plain dest.exists() check no longer sees it and reissues it.
+        // Pinning the clock reproduces that on demand instead of waiting for a fast runner. Uses its
+        // own ProjectRepository instance (not the shared `repo`) precisely so its trash entries never
+        // leak into this file's other tests' listTrash() assertions.
+        val id = savedProject()
+        val clock = FrozenClock(9_000_000L)
+        val frozenRepo = ProjectRepository(app, SaveHooksWithClock(clock))
+        val a = frozenRepo.deleteProject(id)!!
+        assertTrue(frozenRepo.restoreProject(a))
+        val b = frozenRepo.deleteProject(id)!!
+        assertNotEquals("same millisecond, delete-restore-delete must still not collide", a, b)
+        assertTrue(frozenRepo.restoreProject(b))
+    }
+
+    @Test
     fun `restore refuses to overwrite a project that exists again and leaves both alone`() = runBlocking {
         val id = savedProject("Original")
         val trashId = repo.deleteProject(id)!!
@@ -415,4 +434,12 @@ class ProjectTrashTest {
         const val TEST_PIN = "123456"
         const val LOOPBACK = "127.0.0.1"
     }
+}
+
+/** A [SaveHooks.nowMs] that a test can hold at an exact value, to pin two calls into [ProjectRepository]
+ * to the same millisecond on demand instead of relying on real clock timing to happen to collide. */
+private class FrozenClock(@Volatile var millis: Long)
+
+private class SaveHooksWithClock(private val clock: FrozenClock) : SaveHooks() {
+    override fun nowMs(): Long = clock.millis
 }
