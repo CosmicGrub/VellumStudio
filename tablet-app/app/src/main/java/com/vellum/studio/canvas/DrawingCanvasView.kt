@@ -8,6 +8,7 @@ import android.graphics.Color
 import android.graphics.Matrix
 import android.graphics.Paint
 import android.graphics.PointF
+import android.graphics.Rect
 import android.graphics.RectF
 import android.os.Build
 import android.util.AttributeSet
@@ -201,6 +202,29 @@ class DrawingCanvasView @JvmOverloads constructor(
     // (whole-stroke, canvas-space) bounds of everything stamped so far -- see StrokePreviewCompositor
     // for why that is cumulative rather than the per-frame dirty union this view used to keep here.
     private val strokePreviewCompositor = StrokePreviewCompositor()
+
+    // Cumulative canvas-space bounds of every dab landed so far THIS stroke (main renderer + every
+    // symmetry mirror), used at commit to crop the pixel-edit undo step instead of storing two
+    // full-canvas bitmaps -- see UndoManager.PixelEdit and this item's roadmap entry. Kept as its
+    // own field rather than reusing strokePreviewCompositor's bounds (which happen to union the same
+    // per-dab rects today) so the two stay independent: the preview's bounds are a display-only
+    // concern (sizing an offscreen buffer) that could change shape for unrelated reasons, while this
+    // one feeds directly into what gets restored on undo/redo -- a purely cosmetic future change to
+    // the preview's bounds must never silently change what pixels a crop-based undo step covers.
+    private val strokeDirtyUnion = RectF()
+    private var hasStrokeDirtyUnion = false
+
+    private fun resetStrokeDirtyUnion() {
+        strokeDirtyUnion.setEmpty()
+        hasStrokeDirtyUnion = false
+    }
+
+    private fun noteStrokeDirty(canvasSpaceRect: RectF) {
+        if (hasStrokeDirtyUnion) strokeDirtyUnion.union(canvasSpaceRect) else {
+            strokeDirtyUnion.set(canvasSpaceRect)
+            hasStrokeDirtyUnion = true
+        }
+    }
 
     // --- finger navigation state ---
     private val navPointerIds = mutableListOf<Int>()
@@ -449,6 +473,11 @@ class DrawingCanvasView @JvmOverloads constructor(
         // of the layer away.
         strokePreviewCompositor.noteDirty(canvasSpaceRect)
 
+        // Also folded into the undo-crop union (see strokeDirtyUnion's own doc) -- every call site
+        // of invalidateDirty is a real dab having just landed (main renderer or a symmetry mirror),
+        // so this is exactly "everything the stroke has touched so far".
+        noteStrokeDirty(canvasSpaceRect)
+
         // This used to map canvasSpaceRect into view space and call the deprecated four-arg
         // invalidate(l, t, r, b) with it. Per View.invalidate(int,int,int,int)'s own
         // deprecation note, the framework has ignored that rect since API 21 in favor of an
@@ -586,8 +615,8 @@ class DrawingCanvasView @JvmOverloads constructor(
 
         val before = layer.snapshot()
         val boundary = eng.boundaryMaskAbove(eng.activeLayerIndex)
-        val changed = try {
-            FloodFillTool.fill(
+        val result = try {
+            FloodFillTool.fillTracked(
                 target = layer.bitmap,
                 boundary = boundary,
                 startX = px,
@@ -599,10 +628,12 @@ class DrawingCanvasView @JvmOverloads constructor(
             boundary.recycle()
         }
 
-        if (changed) {
+        if (result.changed) {
             layer.bumpVersion()
             eng.bumpRevision()
-            eng.undoManager.beginStroke(layer.id, before).commit(layer.snapshot())
+            // FloodFillTool.fillTracked's bounds are exact pixel writes (no blur/AA to bleed past
+            // them), so they crop the undo step directly, no padding needed.
+            eng.undoManager.beginStroke(layer.id, before).commit(layer.snapshot(), result.bounds)
             onStrokeCommitted?.invoke()
             invalidate()
         } else {
@@ -704,7 +735,7 @@ class DrawingCanvasView @JvmOverloads constructor(
      * redraws the extracted content at [to]. One undo step, same pattern as a committed stroke. */
     private fun commitSelectionMove(eng: CanvasEngine, from: RectF, to: RectF) {
         val layer = eng.activeLayer() ?: return
-        val srcRect = android.graphics.Rect()
+        val srcRect = Rect()
         from.roundOut(srcRect)
         srcRect.intersect(0, 0, eng.widthPx, eng.heightPx)
         if (srcRect.isEmpty) return
@@ -719,9 +750,21 @@ class DrawingCanvasView @JvmOverloads constructor(
         canvas.drawBitmap(extracted, destLeft, destTop, null)
         extracted.recycle()
 
+        // Dirty rect = the cleared source (exact -- srcRect came from roundOut + intersect, and the
+        // clear paints exactly that rect) union the pasted destination. The destination is drawn at
+        // a FLOAT offset (a drag rarely lands on an exact canvas pixel), so unlike srcRect it gets
+        // the same small AA pad a brush stroke's crop gets, rather than being treated as exact.
+        val destRectF = RectF(destLeft, destTop, destLeft + srcRect.width(), destTop + srcRect.height())
+        destRectF.inset(-DIRTY_RECT_AA_PAD_PX, -DIRTY_RECT_AA_PAD_PX)
+        val destRect = Rect()
+        destRectF.roundOut(destRect)
+        val dirtyRect = Rect(srcRect)
+        dirtyRect.union(destRect)
+        dirtyRect.intersect(0, 0, eng.widthPx, eng.heightPx)
+
         layer.bumpVersion()
         eng.bumpRevision()
-        eng.undoManager.beginStroke(layer.id, before).commit(layer.snapshot())
+        eng.undoManager.beginStroke(layer.id, before).commit(layer.snapshot(), dirtyRect)
         onStrokeCommitted?.invoke()
     }
 
@@ -755,6 +798,49 @@ class DrawingCanvasView @JvmOverloads constructor(
         return InputSample(cx, cy, pressure, tilt, orientation)
     }
 
+    /**
+     * How much [CanvasEngine.flattenScratchOnto]'s wetness [android.graphics.BlurMaskFilter] can
+     * spread a commit past the dab loop's own (unblurred) reported bounds -- the blur runs AFTER
+     * the dab loop has already reported [strokeDirtyUnion], so without this the blurred spread would
+     * land outside the crop and get silently dropped by the next undo/redo. Mirrors
+     * [CanvasEngine.flattenScratchOnto]'s own radius formula exactly (same canvas-relative scaling),
+     * times [WETNESS_BLUR_PAD_MULTIPLIER] -- a BlurMaskFilter's NORMAL style visibly softens pixels
+     * well past its nominal radius, so 1x the radius under-pads it. Zero for a non-wet brush.
+     */
+    private fun wetnessBleedPad(eng: CanvasEngine, brush: Brush): Float {
+        if (brush.wetness <= 0f) return 0f
+        val radius = (eng.widthPx.coerceAtMost(eng.heightPx) * 0.006f * brush.wetness).coerceAtLeast(1f)
+        return radius * WETNESS_BLUR_PAD_MULTIPLIER
+    }
+
+    /**
+     * Turns a stroke's (or a synthesized shape redraw's) cumulative canvas-space dab bounds into the
+     * integer, canvas-clamped [Rect] a crop-based [UndoManager.PixelEdit] needs -- padded for AA
+     * (dabs draw with [Paint.ANTI_ALIAS_FLAG] plus bilinear filtering, which can sample/blend a
+     * fraction of a pixel past the dab loop's own exact bounds) and, for a wet brush, for
+     * [wetnessBleedPad]'s blur spread. Returns null when nothing survives clamping to the canvas
+     * (the whole union was off-canvas), which [UndoManager.PendingStroke.commit] treats as "unknown
+     * bounds" and falls back to a whole-layer step -- safe, just not memory-optimal, and this only
+     * happens for a stroke/mirror that strayed entirely outside the layer.
+     */
+    private fun padAndClampDirtyRect(eng: CanvasEngine, brush: Brush, union: RectF): Rect? {
+        val pad = DIRTY_RECT_AA_PAD_PX + wetnessBleedPad(eng, brush)
+        val padded = RectF(union)
+        padded.inset(-pad, -pad)
+        val rect = Rect()
+        padded.roundOut(rect)
+        return if (rect.intersect(0, 0, eng.widthPx, eng.heightPx)) rect else null
+    }
+
+    /** [strokeDirtyUnion] (see its own doc) turned into the [Rect] this stroke's commit should crop
+     * its undo step to -- null if the stroke never actually stamped anything (shouldn't happen for a
+     * real stroke, since [startStroke] always stamps a first dab, but a degenerate/off-canvas one
+     * could still legitimately produce no bounds at all). */
+    private fun computeStrokeDirtyRect(eng: CanvasEngine, brush: Brush): Rect? {
+        if (!hasStrokeDirtyUnion) return null
+        return padAndClampDirtyRect(eng, brush, strokeDirtyUnion)
+    }
+
     private fun startStroke(eng: CanvasEngine, event: MotionEvent, idx: Int) {
         val layer = eng.activeLayer() ?: return
         if (layer.locked) return
@@ -778,6 +864,7 @@ class DrawingCanvasView @JvmOverloads constructor(
         strokeRenderer = renderer
         strokeTargetLayer = layer
         strokePreviewCompositor.beginStroke()
+        resetStrokeDirtyUnion()
 
         // Checked once, here, rather than on every sample below -- see the field's own doc
         // comment for why an Assist-off stroke never touches any of this.
@@ -876,7 +963,10 @@ class DrawingCanvasView @JvmOverloads constructor(
             StrokeCommit.flatten(eng, layer, renderer.brush)
             layer.bumpVersion()
             eng.bumpRevision()
-            pendingStroke?.commit(layer.snapshot())
+            // Computed BEFORE cleanupStrokeState() resets strokeDirtyUnion -- see its own doc for
+            // why this is a separate accumulator from the live-preview bounds.
+            val dirtyRect = computeStrokeDirtyRect(eng, renderer.brush)
+            pendingStroke?.commit(layer.snapshot(), dirtyRect)
             onStrokeCommitted?.invoke()
             offerShapeAssistIfCandidate(eng, layer)
         } else {
@@ -932,10 +1022,10 @@ class DrawingCanvasView @JvmOverloads constructor(
         eng.bumpRevision()
 
         val before = layer.snapshot()
-        drawShapeOnto(eng, layer, pending)
+        val dirtyRect = drawShapeOnto(eng, layer, pending)
         layer.bumpVersion()
         eng.bumpRevision()
-        eng.undoManager.beginStroke(layer.id, before).commit(layer.snapshot())
+        eng.undoManager.beginStroke(layer.id, before).commit(layer.snapshot(), dirtyRect)
         onStrokeCommitted?.invoke()
         invalidate()
     }
@@ -945,20 +1035,36 @@ class DrawingCanvasView @JvmOverloads constructor(
      * (see [endStroke]) -- reusing that hardened compositing path rather than a bespoke "draw a
      * shape" routine, so a snapped shape looks and behaves exactly like a hand-drawn one of the same
      * brush would. Synthetic samples use full pressure/no tilt -- a "perfectly drawn" ruler-clean
-     * stroke, on purpose. */
-    private fun drawShapeOnto(eng: CanvasEngine, layer: Layer, pending: PendingShapeAssist) {
+     * stroke, on purpose.
+     *
+     * @return the union of every dab's reported bounds, padded/clamped exactly like a real stroke's
+     * (see [computeStrokeDirtyRect]) -- kept as a LOCAL union rather than routing through
+     * [strokeDirtyUnion]/[invalidateDirty] since this never runs concurrently with a live pointer
+     * stroke (it is only reached from [applyPendingShapeSnap], a discrete UI action) and doing so
+     * would otherwise have to reset/restore that field around a call that isn't a real touch stroke.
+     */
+    private fun drawShapeOnto(eng: CanvasEngine, layer: Layer, pending: PendingShapeAssist): Rect? {
         val path = ShapeAssist.perimeterPoints(pending.candidate)
-        if (path.size < 2) return
+        if (path.size < 2) return null
         val brush = pending.brush
         val renderer = DabStrokeEngine(brush, pending.colorArgb, pending.sizeMultiplier, pending.opacityMultiplier)
         val target = StrokeCommit.targetCanvas(eng, layer, brush)
+        val union = RectF()
+        var hasUnion = false
+        fun note(r: RectF?) {
+            if (r == null) return
+            if (hasUnion) union.union(r) else { union.set(r); hasUnion = true }
+        }
         val first = path.first()
         renderer.start(target, InputSample(first.x, first.y, pressure = 1f))
+        note(renderer.takeDirtyBounds())
         for (i in 1 until path.size) {
             val p = path[i]
             renderer.moveTo(target, InputSample(p.x, p.y, pressure = 1f))
+            note(renderer.takeDirtyBounds())
         }
         StrokeCommit.flatten(eng, layer, brush)
+        return if (hasUnion) padAndClampDirtyRect(eng, brush, union) else null
     }
 
     private fun cancelStroke() {
@@ -982,6 +1088,7 @@ class DrawingCanvasView @JvmOverloads constructor(
         pendingStroke = null
         navBaselineSet = false
         strokePreviewCompositor.beginStroke()
+        resetStrokeDirtyUnion()
         mirrorRenderers = emptyList()
         // Deliberately NOT clearing pendingShapeAssist here -- see its own field doc comment for
         // why it needs to outlive this cleanup (a Snackbar offering it is shown right after this
@@ -1088,6 +1195,18 @@ class DrawingCanvasView @JvmOverloads constructor(
         // Base padding (canvas units) around the cumulative stroke bounds in the live preview, so a
         // dab's soft falloff edge and bilinear filtering don't get cut right at the seam.
         private const val PREVIEW_BOUNDS_PAD_PX = 4f
+
+        // Padding (canvas px) around a crop-based undo step's dirty rect for anti-aliasing/bilinear
+        // sampling slop at the dab loop's own reported boundary -- see padAndClampDirtyRect. Also
+        // reused, unrelated to AA, as commitSelectionMove's slop for a fractional-pixel paste offset.
+        private const val DIRTY_RECT_AA_PAD_PX = 2f
+
+        // Multiplier on CanvasEngine.flattenScratchOnto's own wetness blur radius when padding a
+        // crop-based undo step's dirty rect for a wet brush -- see wetnessBleedPad. A
+        // BlurMaskFilter.NORMAL blur visibly softens pixels well past its nominal radius, so 1x
+        // under-pads it; chosen empirically generous rather than derived from the exact Gaussian
+        // falloff BlurMaskFilter uses internally (undocumented, platform-implementation-defined).
+        private const val WETNESS_BLUR_PAD_MULTIPLIER = 3f
 
         // Safety cap on Smart Shape Assist's parallel point capture (see shapeAssistPoints) -- a
         // very long, slow drag shouldn't grow this list unboundedly. Recognition doesn't need
