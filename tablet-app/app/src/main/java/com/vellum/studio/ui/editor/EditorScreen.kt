@@ -658,6 +658,30 @@ fun EditorScreen(
                             engine = eng,
                             modifier = Modifier.width(340.dp).fillMaxHeight(),
                             onMessage = { msg -> scope.launch { snackbarHostState.showSnackbar(msg) } },
+                            onLayerDeleted = {
+                                // Delete is a single unconfirmed tap; this makes it recoverable
+                                // without a modal (same snackbar-action pattern as the shape snap).
+                                // The action undoes the TOP history step, so it is only honest
+                                // while nothing else has been done since the delete (every edit,
+                                // stroke or layer change bumps revision); after that the plain
+                                // Undo button/Ctrl+Z walks back through the newer edits first.
+                                val revisionAtDelete = eng.revision
+                                scope.launch {
+                                    snackbarHostState.currentSnackbarData?.dismiss()
+                                    val result = snackbarHostState.showSnackbar(
+                                        message = "Layer deleted",
+                                        actionLabel = "Undo",
+                                        duration = SnackbarDuration.Long,
+                                    )
+                                    if (result == SnackbarResult.ActionPerformed) {
+                                        if (eng.revision == revisionAtDelete) {
+                                            doUndo()
+                                        } else {
+                                            snackbarHostState.showSnackbar("You've edited since -- use Undo to step back to the deleted layer")
+                                        }
+                                    }
+                                }
+                            },
                         )
                     }
                 }
