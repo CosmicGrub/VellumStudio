@@ -167,7 +167,18 @@ fun EditorScreen(
         val m = meta
         val e = engine
         if (m != null && e != null) {
-            scope.launch { meta = repository.saveProject(m, e) }
+            // requestSave captures the layers RIGHT HERE, synchronously on Main, and hands the
+            // encode/write to the app-scoped SaveCoordinator -- so Back (saveNow() then onBack())
+            // can no longer race this composition's scope being cancelled before a launched body
+            // ever ran, and the save itself survives the screen going away either way. The launch
+            // below only waits for the result to update `meta` and to tell the user if it failed
+            // (disk full etc.); a failure here is a Snackbar, never a crash.
+            val pending = repository.requestSave(m, e)
+            scope.launch {
+                val outcome = pending.await()
+                meta = outcome.meta
+                outcome.failure?.let { snackbarHostState.showSnackbar(it.userMessage) }
+            }
         }
     }
 
@@ -286,13 +297,21 @@ fun EditorScreen(
 
     LaunchedEffect(projectId) {
         loading = true
-        val loaded = repository.loadProject(projectId)
+        val loaded = repository.loadProjectReporting(projectId)
         if (loaded != null) {
-            meta = loaded.first
-            engine = loaded.second
-            LiveCanvasBridge.set(loaded.first, loaded.second)
+            meta = loaded.meta
+            engine = loaded.engine
+            LiveCanvasBridge.set(loaded.meta, loaded.engine)
         }
         loading = false
+        // After loading=false: showSnackbar suspends until dismissed and must not hold the canvas hostage.
+        if (loaded != null && loaded.quarantinedLayerNames.isNotEmpty()) {
+            snackbarHostState.showSnackbar(
+                "Couldn't read layer ${loaded.quarantinedLayerNames.joinToString(", ") { "\"$it\"" }}; it opens blank. " +
+                    "The damaged file was kept aside (.corrupt) rather than overwritten.",
+                duration = SnackbarDuration.Long,
+            )
+        }
     }
 
     // currentTool is included so switching into Paint by Number immediately shows the numbered

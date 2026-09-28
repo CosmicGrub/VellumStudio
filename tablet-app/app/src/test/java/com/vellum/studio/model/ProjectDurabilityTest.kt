@@ -1,0 +1,455 @@
+package com.vellum.studio.model
+
+import android.graphics.Bitmap
+import android.graphics.BitmapFactory
+import android.graphics.Color
+import com.vellum.studio.VellumApp
+import com.vellum.studio.canvas.CanvasEngine
+import com.vellum.studio.canvas.Layer
+import kotlinx.coroutines.CoroutineStart
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withTimeout
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertTrue
+import org.junit.Test
+import org.junit.runner.RunWith
+import org.robolectric.RobolectricTestRunner
+import org.robolectric.RuntimeEnvironment
+import org.robolectric.annotation.Config
+import org.robolectric.annotation.GraphicsMode
+import java.io.File
+import java.io.IOException
+import java.io.OutputStream
+import java.io.RandomAccessFile
+import java.util.Collections
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicInteger
+
+/**
+ * Regression coverage for the durable save pipeline ([ProjectRepository.requestSave] /
+ * [SaveCoordinator] / [com.vellum.studio.util.DurableFile]): the defect cluster where overlapping
+ * unserialized saves, in-place PNG truncation, live bitmaps read on IO threads, and an undecodable
+ * layer silently replaced by blank-then-overwritten could each destroy or crash a user's project.
+ *
+ * `@GraphicsMode(NATIVE)` because these assert on REAL encoded PNG bytes and real decoded pixels
+ * (same reason as DiagramRendererTest); under the legacy shadow graphics a truncated PNG would
+ * "decode" to garbage and the whole quarantine path would be untestable. VellumApp is the
+ * application for the same reason ProjectRepositoryTest uses it (the thumbnail flatten reads
+ * VellumApp.instance's paper-texture setting).
+ *
+ * Every "the app was killed / restarted" case is modeled as a FRESH [ProjectRepository] over the
+ * same directory: a new instance has no in-memory dirty-tracking, exactly like a new process.
+ */
+@RunWith(RobolectricTestRunner::class)
+@GraphicsMode(GraphicsMode.Mode.NATIVE)
+@Config(sdk = [33], application = VellumApp::class)
+class ProjectDurabilityTest {
+
+    private val app = RuntimeEnvironment.getApplication()
+
+    /** Observes, slows and fails the two places a real device can be killed or run out of space. */
+    private class TestHooks : SaveHooks() {
+        val encodedIds: MutableList<String> = Collections.synchronizedList(mutableListOf())
+        private val active = AtomicInteger()
+        val maxConcurrentEncodes = AtomicInteger()
+        @Volatile var entered = CountDownLatch(1)
+            private set
+
+        @Volatile var gate: CountDownLatch? = null
+            private set
+        @Volatile var dawdleMs = 0L
+        @Volatile var failEncode: IOException? = null
+        @Volatile var failBeforeMetadata: IOException? = null
+
+        /** Makes the NEXT encode block until [gate] is released; [entered] fires when it is blocked. */
+        fun arm() {
+            entered = CountDownLatch(1)
+            gate = CountDownLatch(1)
+        }
+
+        override fun encodeLayer(layerId: String, bitmap: Bitmap, out: OutputStream): Boolean {
+            failEncode?.let {
+                out.write(ByteArray(100)) // a partial write, so the tmp file really has bytes to clean up
+                throw it
+            }
+            val n = active.incrementAndGet()
+            maxConcurrentEncodes.accumulateAndGet(n) { a, b -> maxOf(a, b) }
+            try {
+                entered.countDown()
+                gate?.await(10, TimeUnit.SECONDS)
+                if (dawdleMs > 0) Thread.sleep(dawdleMs)
+                encodedIds += layerId
+                return super.encodeLayer(layerId, bitmap, out)
+            } finally {
+                active.decrementAndGet()
+            }
+        }
+
+        override fun beforeMetadataCommit(projectId: String) {
+            failBeforeMetadata?.let { throw it }
+        }
+    }
+
+    private fun repo(hooks: SaveHooks = SaveHooks()) = ProjectRepository(app, hooks)
+
+    private fun paint(layer: Layer, color: Int) {
+        layer.bitmap.eraseColor(color)
+        layer.bumpVersion()
+    }
+
+    private fun layerFile(repo: ProjectRepository, projectId: String, layer: Layer) =
+        File(File(repo.projectDir(projectId), "layers"), "${layer.id}.png")
+
+    private fun decodePixel(file: File): Int? = BitmapFactory.decodeFile(file.path)?.getPixel(0, 0)
+
+    /** Project with three distinctly colored layers, saved and committed once. */
+    private fun threeLayerProject(repo: ProjectRepository, hooks: TestHooks? = null): Triple<ProjectMeta, CanvasEngine, List<Int>> = runBlocking {
+        val (meta0, engine) = repo.createProject("Durable", 64, 64)
+        engine.addLayer("Two")
+        engine.addLayer("Three")
+        val colors = listOf(Color.RED, Color.GREEN, Color.BLUE)
+        engine.layers.forEachIndexed { i, l -> paint(l, colors[i]) }
+        val outcome = repo.saveProjectDurably(meta0, engine)
+        assertTrue(outcome.failure?.detail, outcome.saved)
+        hooks?.encodedIds?.clear()
+        Triple(outcome.meta, engine, colors)
+    }
+
+    // ------------------------------------------------------------------ (b) single writer
+
+    @Test
+    fun `a burst of overlapping saves never runs two encodes at once and leaves every PNG decodable`() = runBlocking {
+        val hooks = TestHooks().apply { dawdleMs = 15 }
+        val repo = repo(hooks)
+        val (meta, engine, _) = threeLayerProject(repo, hooks)
+
+        // Fire six saves back to back while the first is still encoding (each preceded by an edit,
+        // so each has real work): exactly the "6th-stroke autosave + Back" overlap, times three.
+        val pending = (1..6).map { round ->
+            engine.layers.forEach { paint(it, Color.rgb(round * 30, 0, 0)) }
+            repo.requestSave(meta, engine)
+        }
+        val outcomes = pending.awaitAll()
+
+        assertTrue("every queued/superseded request must still get a successful outcome", outcomes.all { it.saved })
+        assertEquals("saves for one project must be strictly serialized", 1, hooks.maxConcurrentEncodes.get())
+
+        val reloaded = repo().loadProjectReporting(meta.id)!!
+        assertTrue(reloaded.quarantinedLayerNames.isEmpty())
+        assertEquals(3, reloaded.engine.layers.size)
+        // The LAST edit wins: coalescing may drop intermediate rounds but never the newest state.
+        reloaded.engine.layers.forEach { assertEquals(Color.rgb(180, 0, 0), it.bitmap.getPixel(0, 0)) }
+    }
+
+    @Test
+    fun `saves fired from separate threads at once are serialized and decodable`() {
+        val hooks = TestHooks().apply { dawdleMs = 10 }
+        val repo = repo(hooks)
+        val (meta, engine, _) = threeLayerProject(repo, hooks)
+        engine.layers.forEach { paint(it, Color.MAGENTA) }
+
+        val go = CountDownLatch(1)
+        val results = Collections.synchronizedList(mutableListOf<SaveOutcome>())
+        val threads = (1..4).map {
+            Thread {
+                go.await()
+                results += runBlocking { repo.saveProjectDurably(meta, engine) }
+            }.apply { start() }
+        }
+        go.countDown()
+        threads.forEach { it.join(15_000) }
+
+        assertEquals(4, results.size)
+        assertTrue(results.all { it.saved })
+        assertEquals(1, hooks.maxConcurrentEncodes.get())
+        runBlocking { repo().loadProjectReporting(meta.id)!! }.engine.layers.forEach {
+            assertEquals(Color.MAGENTA, it.bitmap.getPixel(0, 0))
+        }
+    }
+
+    @Test
+    fun `a save keeps running after the caller that started it is cancelled`() = runBlocking {
+        val hooks = TestHooks()
+        val repo = repo(hooks)
+        val (meta, engine, _) = threeLayerProject(repo, hooks)
+        val target = engine.layers[0]
+        paint(target, Color.YELLOW)
+        hooks.arm()
+
+        // Models the editor scope being cancelled the moment Back is pressed.
+        val caller = launch(Dispatchers.Default, start = CoroutineStart.UNDISPATCHED) { repo.saveProjectDurably(meta, engine) }
+        assertTrue(hooks.entered.await(10, TimeUnit.SECONDS))
+        caller.cancel()
+        caller.join()
+        hooks.gate!!.countDown()
+
+        val file = layerFile(repo, meta.id, target)
+        withTimeout(10_000) { while (decodePixel(file) != Color.YELLOW) delay(20) }
+        assertEquals(Color.YELLOW, decodePixel(file))
+    }
+
+    // ------------------------------------------------------------------ (c) snapshots
+
+    @Test
+    fun `deleting mutating and adding layers during a slow encode neither crashes nor tears the saved copy`() = runBlocking {
+        val hooks = TestHooks()
+        val repo = repo(hooks)
+        val (meta, engine, colors) = threeLayerProject(repo, hooks)
+        val ids = engine.layers.map { it.id }
+        // Dirty every layer so all three are snapshotted and encoded, then hold the encoder open.
+        engine.layers.forEachIndexed { i, l -> paint(l, colors[i]) }
+        hooks.arm()
+        assertEquals("active layer is the top one", 2, engine.activeLayerIndex)
+
+        val pending = repo.requestSave(meta, engine)
+        assertTrue(hooks.entered.await(10, TimeUnit.SECONDS))
+
+        // --- while the IO thread is stuck inside the encoder, the UI thread does everything the
+        //     audit said could crash or tear the save ---
+        val recycled = engine.layers[2].bitmap
+        engine.deleteActiveLayer()               // recycles the LIVE bitmap immediately
+        assertTrue(recycled.isRecycled)
+        paint(engine.layers[0], Color.BLACK)      // in-place overwrite of a layer being saved
+        engine.addLayer("Late")                   // structural change to the SnapshotStateList
+        hooks.gate!!.countDown()
+
+        val outcome = pending.await()
+        assertTrue(outcome.failure?.detail, outcome.saved)
+
+        // The committed project is the state AT CAPTURE: three layers, original colors.
+        val reloaded = repo().loadProjectReporting(meta.id)!!
+        assertTrue(reloaded.quarantinedLayerNames.isEmpty())
+        assertEquals(ids, reloaded.engine.layers.map { it.id })
+        assertEquals(colors, reloaded.engine.layers.map { it.bitmap.getPixel(0, 0) })
+
+        // ...and the post-mutation state saves cleanly on top of it afterwards.
+        val second = repo.saveProjectDurably(outcome.meta, engine)
+        assertTrue(second.saved)
+        val after = repo().loadProjectReporting(meta.id)!!
+        assertEquals(engine.layers.map { it.id }, after.engine.layers.map { it.id })
+        assertEquals(Color.BLACK, after.engine.layers[0].bitmap.getPixel(0, 0))
+    }
+
+    @Test
+    fun `unchanged layers are not re-encoded and their files are not touched`() = runBlocking {
+        val hooks = TestHooks()
+        val repo = repo(hooks)
+        val (meta, engine, _) = threeLayerProject(repo, hooks)
+        val files = engine.layers.map { layerFile(repo, meta.id, it) }
+        // Age the files so a rewrite is unmistakable regardless of filesystem timestamp resolution.
+        val aged = System.currentTimeMillis() - 60_000
+        files.forEach { assertTrue(it.setLastModified(aged)) }
+        val agedActual = files.map { it.lastModified() }
+
+        paint(engine.layers[1], Color.CYAN)
+        assertTrue(repo.saveProjectDurably(meta, engine).saved)
+
+        assertEquals("only the edited layer may be re-encoded", listOf(engine.layers[1].id), hooks.encodedIds.toList())
+        assertEquals(agedActual[0], files[0].lastModified())
+        assertEquals(agedActual[2], files[2].lastModified())
+        assertTrue("the edited layer's file was rewritten", files[1].lastModified() != agedActual[1])
+        assertEquals(Color.CYAN, decodePixel(files[1]))
+
+        // A save with nothing dirty encodes nothing (but still commits metadata and thumbnail).
+        hooks.encodedIds.clear()
+        assertTrue(repo.saveProjectDurably(meta, engine).saved)
+        assertTrue(hooks.encodedIds.isEmpty())
+        assertNotNull(BitmapFactory.decodeFile(File(repo.projectDir(meta.id), "thumbnail.png").path))
+    }
+
+    @Test
+    fun `after reopening a project a save with no edits encodes no layer and still refreshes the thumbnail`() = runBlocking {
+        val first = repo()
+        val (meta, _, _) = threeLayerProject(first)
+        val thumb = File(first.projectDir(meta.id), "thumbnail.png")
+        thumb.delete()
+
+        val hooks = TestHooks()
+        val second = repo(hooks)
+        val loaded = second.loadProjectReporting(meta.id)!!
+        assertTrue(second.saveProjectDurably(loaded.meta, loaded.engine).saved)
+
+        assertTrue("reopen + save must not re-encode layers that came straight off disk", hooks.encodedIds.isEmpty())
+        assertNotNull("thumbnail is rebuilt from scaled pieces even though no layer was snapshotted", BitmapFactory.decodeFile(thumb.path))
+    }
+
+    // ------------------------------------------------------------------ (a) atomic commit / kill
+
+    @Test
+    fun `a kill between the layer renames and the metadata write reloads the previous project`() = runBlocking {
+        val hooks = TestHooks()
+        val repo = repo(hooks)
+        val (meta, engine, _) = threeLayerProject(repo, hooks)
+        val previousIds = engine.layers.map { it.id }
+
+        // The doomed save: repaint a layer, add a new one, get killed after the PNGs are renamed in.
+        paint(engine.layers[0], Color.WHITE)
+        val added = engine.addLayer("Added")
+        paint(added, Color.BLACK)
+        hooks.failBeforeMetadata = IOException("simulated process kill")
+        val failed = repo.saveProjectDurably(meta, engine)
+        assertFalse(failed.saved)
+
+        val layersDir = File(repo.projectDir(meta.id), "layers")
+        assertTrue("the new layer's PNG made it to disk before the 'kill'", File(layersDir, "${added.id}.png").exists())
+
+        // Restart: a brand-new repository. Structure is exactly the previous commit; nothing is
+        // quarantined, nothing is blank.
+        val restarted = repo()
+        val reloaded = restarted.loadProjectReporting(meta.id)!!
+        assertEquals(previousIds, reloaded.engine.layers.map { it.id })
+        assertTrue(reloaded.quarantinedLayerNames.isEmpty())
+        assertEquals(meta.name, reloaded.meta.name)
+
+        // The orphan is swept by the next successful save from the restarted app...
+        assertTrue(restarted.saveProjectDurably(reloaded.meta, reloaded.engine).saved)
+        assertFalse(File(layersDir, "${added.id}.png").exists())
+
+        // ...and, on the ORIGINAL repository, the failed save is fully retried (nothing was
+        // wrongly recorded as saved when the commit didn't happen).
+        hooks.failBeforeMetadata = null
+        assertTrue(repo.saveProjectDurably(meta, engine).saved)
+        val finalLoad = repo().loadProjectReporting(meta.id)!!
+        assertEquals(engine.layers.map { it.id }, finalLoad.engine.layers.map { it.id })
+        assertEquals(Color.BLACK, finalLoad.engine.layers.last().bitmap.getPixel(0, 0))
+        assertEquals(Color.WHITE, finalLoad.engine.layers.first().bitmap.getPixel(0, 0))
+    }
+
+    @Test
+    fun `deleted layers' files are removed only after the new metadata is committed`() = runBlocking {
+        val hooks = TestHooks()
+        val repo = repo(hooks)
+        val (meta, engine, _) = threeLayerProject(repo, hooks)
+        val doomed = engine.layers[2]
+        val doomedFile = layerFile(repo, meta.id, doomed)
+        engine.deleteActiveLayer()
+
+        hooks.failBeforeMetadata = IOException("simulated process kill")
+        assertFalse(repo.saveProjectDurably(meta, engine).saved)
+        assertTrue("old metadata still references it, so the file must survive a failed commit", doomedFile.exists())
+        val stillOld = repo().loadProjectReporting(meta.id)!!
+        assertEquals(3, stillOld.engine.layers.size)
+        assertEquals(Color.BLUE, stillOld.engine.layers[2].bitmap.getPixel(0, 0))
+
+        hooks.failBeforeMetadata = null
+        assertTrue(repo.saveProjectDurably(meta, engine).saved)
+        assertFalse(doomedFile.exists())
+    }
+
+    // ------------------------------------------------------------------ (d) quarantine
+
+    @Test
+    fun `a truncated layer PNG is quarantined and reported and never overwritten by a later save`() = runBlocking {
+        val repo = repo()
+        val (meta, engine, colors) = threeLayerProject(repo)
+        val victim = engine.layers[1]
+        val victimFile = layerFile(repo, meta.id, victim)
+        RandomAccessFile(victimFile, "rw").use { it.setLength(10) }
+        val truncatedBytes = victimFile.readBytes()
+
+        val reopened = repo()
+        val loaded = reopened.loadProjectReporting(meta.id)!!
+        assertEquals(listOf(victim.name), loaded.quarantinedLayerNames)
+        val corrupt = File(victimFile.path + ".corrupt")
+        assertTrue("damaged bytes are kept, not deleted", corrupt.exists())
+        assertTrue(truncatedBytes.contentEquals(corrupt.readBytes()))
+        assertFalse(victimFile.exists())
+        // Other layers are untouched and the damaged one opens blank instead of failing the project.
+        assertEquals(colors[0], loaded.engine.layers[0].bitmap.getPixel(0, 0))
+        assertEquals(0, loaded.engine.layers[1].bitmap.getPixel(0, 0))
+        assertEquals(colors[2], loaded.engine.layers[2].bitmap.getPixel(0, 0))
+
+        // Saving afterwards writes a real file for the layer but leaves the quarantined bytes alone.
+        assertTrue(reopened.saveProjectDurably(loaded.meta, loaded.engine).saved)
+        assertTrue(truncatedBytes.contentEquals(corrupt.readBytes()))
+        val again = repo().loadProjectReporting(meta.id)!!
+        assertTrue("no repeat warning once the layer has a valid file again", again.quarantinedLayerNames.isEmpty())
+        assertEquals(3, again.engine.layers.size)
+    }
+
+    @Test
+    fun `truncated metadata falls back to the backup with layer names and order intact`() = runBlocking {
+        val repo = repo()
+        val (meta, engine, _) = threeLayerProject(repo)
+        engine.layers[0].name = "Sketch"
+        val v1 = repo.saveProjectDurably(meta, engine)
+        engine.layers[0].name = "Ink"                    // second save rotates v1 into metadata.json.bak
+        assertTrue(repo.saveProjectDurably(v1.meta, engine).saved)
+
+        val metaFile = File(repo.projectDir(meta.id), "metadata.json")
+        val bakFile = File(repo.projectDir(meta.id), "metadata.json.bak")
+        assertTrue(bakFile.exists())
+        RandomAccessFile(metaFile, "rw").use { it.setLength(5) }
+
+        val loaded = repo().loadProjectReporting(meta.id)!!
+        assertEquals("real name, not 'Recovered Project'", "Durable", loaded.meta.name)
+        assertEquals(engine.layers.map { it.id }, loaded.engine.layers.map { it.id })
+        assertEquals("previous good version's layer name, not 'Recovered Layer N'", "Sketch", loaded.engine.layers[0].name)
+    }
+
+    // ------------------------------------------------------------------ (e) failures are values, not crashes
+
+    @Test
+    fun `disk full during a save is reported as a failed outcome, leaves the old project intact and cleans up`() = runBlocking {
+        val hooks = TestHooks()
+        val repo = repo(hooks)
+        val (meta, engine, colors) = threeLayerProject(repo, hooks)
+        engine.layers.forEach { paint(it, Color.WHITE) }
+
+        hooks.failEncode = IOException("write failed: ENOSPC (No space left on device)")
+        val outcome = repo.saveProjectDurably(meta, engine) // must not throw
+        assertFalse(outcome.saved)
+        assertEquals(SaveFailure.Kind.STORAGE_FULL, outcome.failure!!.kind)
+        assertTrue(outcome.failure!!.userMessage.contains("storage is full"))
+
+        val layersDir = File(repo.projectDir(meta.id), "layers")
+        assertTrue("half-written tmp files are removed", layersDir.listFiles()!!.none { it.name.endsWith(".tmp") })
+        val reloaded = repo().loadProjectReporting(meta.id)!!
+        assertTrue(reloaded.quarantinedLayerNames.isEmpty())
+        assertEquals("the last good save is untouched", colors, reloaded.engine.layers.map { it.bitmap.getPixel(0, 0) })
+
+        // Once space frees up the very next save succeeds with everything that was pending.
+        hooks.failEncode = null
+        assertTrue(repo.saveProjectDurably(outcome.meta, engine).saved)
+        assertEquals(Color.WHITE, repo().loadProjectReporting(meta.id)!!.engine.layers[0].bitmap.getPixel(0, 0))
+    }
+
+    @Test
+    fun `saving with a recycled live layer bitmap reports a failure instead of crashing`() = runBlocking {
+        val repo = repo()
+        val (meta, engine, _) = threeLayerProject(repo)
+        paint(engine.layers[0], Color.WHITE)
+        engine.layers[0].bitmap.recycle() // a layer that is still listed but already recycled
+        val outcome = repo.saveProjectDurably(meta, engine)
+        assertFalse(outcome.saved)
+        assertNotNull(outcome.failure)
+    }
+
+    @Test
+    fun `saveProject keeps its original signature and still returns the saved meta`() = runBlocking {
+        val repo = repo()
+        val (meta, engine) = repo.createProject("Legacy", 32, 32)
+        val saved: ProjectMeta = repo.saveProject(meta, engine)
+        assertEquals(meta.id, saved.id)
+        assertTrue(saved.updatedAt >= meta.updatedAt)
+        assertEquals(1, repo.listProjects().size)
+    }
+
+    @Test
+    fun `zip export omits durability side files`() = runBlocking {
+        val repo = repo()
+        val (meta, engine, _) = threeLayerProject(repo)
+        assertTrue(repo.saveProjectDurably(meta, engine).saved) // creates metadata.json.bak
+        File(repo.projectDir(meta.id), "layers/x.png.corrupt").writeText("junk")
+        val names = java.util.zip.ZipFile(repo.exportProjectZip(meta.id)).use { z -> z.entries().asSequence().map { it.name }.toList() }
+        assertTrue(names.any { it == "metadata.json" })
+        assertTrue(names.none { it.endsWith(".bak") || it.contains(".corrupt") || it.endsWith(".tmp") })
+    }
+}

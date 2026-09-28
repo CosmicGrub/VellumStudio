@@ -364,27 +364,11 @@ class CanvasEngine(val widthPx: Int, val heightPx: Int) {
      * automatically stays honest with what's actually on screen without each needing its own wiring.
      */
     fun flatten(): Bitmap {
-        val out = Bitmap.createBitmap(widthPx, heightPx, Bitmap.Config.ARGB_8888)
-        val canvas = Canvas(out)
-        canvas.drawColor(Color.WHITE)
-        val paint = Paint(Paint.ANTI_ALIAS_FLAG)
-        for (layer in layers) {
-            if (!layer.visible || layer.opacity <= 0f) continue
-            paint.alpha = (layer.opacity.coerceIn(0f, 1f) * 255).toInt()
-            paint.blendMode = layer.blendMode.blendMode
-            canvas.drawBitmap(layer.bitmap, 0f, 0f, paint)
-            paint.blendMode = null
-        }
-        val settings = VellumApp.instance.settingsRepository
-        if (settings.paperTextureEnabled) {
-            paint.shader = PaperTexture.shader
-            paint.blendMode = BlendMode.MULTIPLY
-            paint.alpha = (PaperTexture.clampStrength(settings.paperTextureStrength) * 255).toInt()
-            canvas.drawRect(0f, 0f, widthPx.toFloat(), heightPx.toFloat(), paint)
-            paint.shader = null
-            paint.blendMode = null
-        }
-        return out
+        // The recipe itself lives in LayerFlattener so the save pipeline can run the identical
+        // composite over its off-main snapshots instead of these live bitmaps.
+        val inputs = layers.filter { it.visible && it.opacity > 0f }
+            .map { LayerFlattener.Input(it.bitmap, it.opacity, it.blendMode) }
+        return LayerFlattener.flatten(widthPx, heightPx, widthPx, heightPx, inputs)
     }
 
     fun recycleAll() {

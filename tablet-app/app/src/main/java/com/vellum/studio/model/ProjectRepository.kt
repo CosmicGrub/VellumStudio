@@ -5,13 +5,19 @@ import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.graphics.Canvas
+import android.graphics.Paint
+import android.graphics.Rect
 import android.net.Uri
 import android.provider.MediaStore
 import com.vellum.studio.art.ColoringTemplate
 import com.vellum.studio.canvas.CanvasEngine
 import com.vellum.studio.canvas.Layer
 import com.vellum.studio.canvas.LayerBlendMode
+import com.vellum.studio.canvas.LayerFlattener
 import com.vellum.studio.util.DiagnosticLog
+import com.vellum.studio.util.DurableFile
+import kotlinx.coroutines.Deferred
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.encodeToString
@@ -27,6 +33,7 @@ import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.longOrNull
 import java.io.File
 import java.io.FileOutputStream
+import java.io.IOException
 import java.util.UUID
 import java.util.zip.ZipEntry
 import java.util.zip.ZipOutputStream
@@ -40,8 +47,23 @@ import java.util.zip.ZipOutputStream
  * App-specific external storage needs no runtime permission on API 29+ and isn't visible to other
  * apps, which is why it (rather than shared storage) is the project format's home; [exportToGallery]
  * is the deliberate, explicit bridge out to the user's Pictures.
+ *
+ * DURABILITY MODEL (see [SaveCoordinator] for the concurrency half): every file is replaced via
+ * [DurableFile] (tmp + fsync + atomic rename), never truncated in place. A save writes the changed
+ * layer PNGs first, then metadata.json as the COMMIT POINT, and only then deletes layer files the
+ * new metadata no longer references -- so a kill at any instant leaves either the previous project
+ * or the new one, never a metadata file pointing at a deleted PNG. metadata.json keeps a
+ * `metadata.json.bak` of the previous good version, and a layer PNG that can't be decoded is set
+ * aside as `<id>.png.corrupt` (reported to the caller) instead of being replaced by a blank bitmap
+ * that the next save would then write over the only surviving bytes. None of this changes the
+ * on-disk format: `.bak`/`.corrupt` are extra sibling files older builds simply ignore, so no schema
+ * migration is needed.
  */
-class ProjectRepository(private val appContext: Context) {
+class ProjectRepository internal constructor(private val appContext: Context, private val hooks: SaveHooks) {
+
+    constructor(appContext: Context) : this(appContext, SaveHooks())
+
+    private val coordinator = SaveCoordinator()
 
     // ignoreUnknownKeys: an unrecognized field (e.g. saved by a newer build) is dropped, not fatal.
     // coerceInputValues: a field whose value doesn't match its type (wrong JSON type, or `null` for
@@ -77,20 +99,41 @@ class ProjectRepository(private val appContext: Context) {
      *
      * Returns null only when none of the three has anything to recover (no metadata AND no layer
      * files) -- i.e. there is genuinely no project here.
+     *
+     * A fourth, cheapest-of-all layer sits in front of layer 3: if metadata.json is missing or won't
+     * parse as JSON, `metadata.json.bak` (the previous good save, kept by [DurableFile]) is tried
+     * first. It has the real layer order, names, opacity, blend modes and locks -- everything
+     * [recoverFromLayerFiles] can only guess at -- so falling straight to the layer-file rebuild
+     * (which sorts by UUID filename and renames the project "Recovered Project") is now the last
+     * resort rather than the first.
      */
     private fun loadOrRecoverMeta(id: String): ProjectMeta? {
         val mf = metaFile(id)
-        if (!mf.exists()) return recoverFromLayerFiles(id)
+        readMetaFile(id, mf)?.let { return it }
+        readMetaFile(id, DurableFile.bakFor(mf))?.let {
+            DiagnosticLog.log(appContext, "ProjectRepository", "Project $id: metadata.json missing or unreadable; restored from metadata.json.bak")
+            return it
+        }
+        return recoverFromLayerFiles(id)
+    }
+
+    /** Parses+migrates+decodes one metadata file (layers 1 and 2 above); null if it's absent or not parseable JSON. */
+    private fun readMetaFile(id: String, file: File): ProjectMeta? {
+        if (!file.exists()) return null
         return runCatching {
-            val root = json.parseToJsonElement(mf.readText()).jsonObject
+            val root = json.parseToJsonElement(file.readText()).jsonObject
             val migrated = ProjectSchemaMigrator.migrate(root)
             runCatching { json.decodeFromJsonElement<ProjectMeta>(migrated) }
                 .getOrElse { decodeLeniently(id, migrated) }
         }.getOrElse { e ->
-            DiagnosticLog.log(appContext, "ProjectRepository", "metadata.json unreadable for project $id (${e.message}); recovering from layer files")
-            recoverFromLayerFiles(id)
+            DiagnosticLog.log(appContext, "ProjectRepository", "${file.name} unreadable for project $id (${e.message})")
+            null
         }
     }
+
+    /** True if [file] is at least parseable JSON -- the bar for being allowed to become the `.bak`. */
+    private fun isParseableMeta(file: File): Boolean =
+        runCatching { json.parseToJsonElement(file.readText()).jsonObject.isNotEmpty() }.getOrDefault(false)
 
     /**
      * Manually pulls [ProjectMeta]'s fields out of [obj] one at a time instead of one atomic
@@ -201,8 +244,7 @@ class ProjectRepository(private val appContext: Context) {
             schemaVersion = ProjectMeta.CURRENT_SCHEMA_VERSION,
         )
         dirFor(id).mkdirs()
-        persist(meta, engine)
-        meta to engine
+        persistNew(meta, engine) to engine
     }
 
     /**
@@ -240,8 +282,7 @@ class ProjectRepository(private val appContext: Context) {
             sourceTemplateId = template.id,
         )
         dirFor(id).mkdirs()
-        persist(meta, engine)
-        meta to engine
+        persistNew(meta, engine) to engine
     }
 
     /**
@@ -278,87 +319,268 @@ class ProjectRepository(private val appContext: Context) {
         return meta.id
     }
 
-    suspend fun loadProject(id: String): Pair<ProjectMeta, CanvasEngine>? = withContext(Dispatchers.IO) {
-        val meta = loadOrRecoverMeta(id) ?: return@withContext null
+    /** A project opened from disk plus what the open had to work around, for the caller to tell the user about. */
+    class LoadedProject(
+        val meta: ProjectMeta,
+        val engine: CanvasEngine,
+        /** Names of layers whose PNG could not be decoded; each was set aside as `<id>.png.corrupt` and opened blank. */
+        val quarantinedLayerNames: List<String>,
+    )
+
+    suspend fun loadProject(id: String): Pair<ProjectMeta, CanvasEngine>? =
+        loadProjectReporting(id)?.let { it.meta to it.engine }
+
+    /**
+     * [loadProject] plus a report of anything quarantined. Runs under the project lock so it can
+     * never observe (or rename files out from under) a save that is mid-flight from the previous
+     * editor session.
+     */
+    suspend fun loadProjectReporting(id: String): LoadedProject? = withContext(Dispatchers.IO) {
+        coordinator.withProjectLock(id) { loadBlocking(id) }
+    }
+
+    private fun loadBlocking(id: String): LoadedProject? {
+        val meta = loadOrRecoverMeta(id) ?: return null
+        val state = coordinator.stateFor(id)
+        val ldir = layersDir(id)
+        // An interrupted save's leftovers; the lock is held, so nothing is writing one right now.
+        DurableFile.sweepTmp(dirFor(id))
+        DurableFile.sweepTmp(ldir)
         val engine = CanvasEngine(meta.widthPx, meta.heightPx)
+        val quarantined = mutableListOf<String>()
+        val loadedVersions = HashMap<String, Int>()
         for (lm in meta.layers.sortedBy { it.order }) {
-            val file = File(layersDir(id), "${lm.id}.png")
+            val file = File(ldir, "${lm.id}.png")
             // BitmapFactory.decode* returns an IMMUTABLE bitmap unless inMutable is set — miss this
             // and every reopened project crashes the instant you draw, since strokes construct a
             // Canvas directly around the layer bitmap. inMutable requires software decoding (no
             // hardware Bitmap.Config), which is what we want anyway since we mutate these in place.
-            val bmp = if (file.exists()) {
-                BitmapFactory.decodeFile(file.path, BitmapFactory.Options().apply { inMutable = true; inPreferredConfig = Bitmap.Config.ARGB_8888 })
-                    ?: Bitmap.createBitmap(meta.widthPx, meta.heightPx, Bitmap.Config.ARGB_8888)
+            var decoded: Bitmap? = null
+            if (file.exists()) {
+                decoded = BitmapFactory.decodeFile(file.path, BitmapFactory.Options().apply { inMutable = true; inPreferredConfig = Bitmap.Config.ARGB_8888 })
+                if (decoded == null) {
+                    // Used to become a silent blank layer whose next save overwrote the only
+                    // surviving bytes. Set the file aside instead, so a truncated PNG stays
+                    // recoverable, and tell the caller.
+                    val aside = DurableFile.quarantine(file)
+                    DiagnosticLog.log(appContext, "ProjectRepository", "Project $id: layer '${lm.name}' (${lm.id}) could not be decoded; ${if (aside != null) "kept as ${aside.name}" else "COULD NOT be set aside"}, opening it blank")
+                    quarantined += lm.name
+                }
             } else {
-                Bitmap.createBitmap(meta.widthPx, meta.heightPx, Bitmap.Config.ARGB_8888)
+                DiagnosticLog.log(appContext, "ProjectRepository", "Project $id: layer file for '${lm.name}' (${lm.id}) is missing; opening it blank")
             }
-            engine.layers.add(
-                Layer(
-                    id = lm.id,
-                    name = lm.name,
-                    bitmap = bmp,
-                    opacity = lm.opacity,
-                    visible = lm.visible,
-                    blendMode = LayerBlendMode.fromLabel(lm.blendMode),
-                    locked = lm.locked,
-                    isReferenceImage = lm.isReferenceImage,
-                ),
+            val bmp = decoded ?: Bitmap.createBitmap(meta.widthPx, meta.heightPx, Bitmap.Config.ARGB_8888)
+            val layer = Layer(
+                id = lm.id,
+                name = lm.name,
+                bitmap = bmp,
+                opacity = lm.opacity,
+                visible = lm.visible,
+                blendMode = LayerBlendMode.fromLabel(lm.blendMode),
+                locked = lm.locked,
+                isReferenceImage = lm.isReferenceImage,
             )
+            engine.layers.add(layer)
+            // Only a layer that really came off disk counts as "already saved at this version"; a
+            // blank stand-in must stay dirty so the next save writes a real file for it.
+            if (decoded != null) loadedVersions[lm.id] = layer.contentVersion
         }
         if (engine.layers.isEmpty()) engine.addLayer("Layer 1")
         engine.activeLayerIndex = meta.activeLayerIndex.coerceIn(0, engine.layers.size - 1)
+        // Fresh baseline for dirty tracking: a new Layer's contentVersion restarts at 0, so versions
+        // remembered from any earlier engine for this project would be meaningless.
+        state.savedVersions.clear()
+        state.savedVersions.putAll(loadedVersions)
+        state.clearThumbs()
         DiagnosticLog.log(appContext, "ProjectRepository", "Project opened (id=$id, name=${meta.name}, layers=${engine.layers.size})")
-        meta to engine
+        return LoadedProject(meta, engine, quarantined)
     }
 
-    suspend fun saveProject(meta: ProjectMeta, engine: CanvasEngine): ProjectMeta = withContext(Dispatchers.IO) {
+    /**
+     * Saves [engine]'s current state as project [meta], durably and without ever throwing at the
+     * caller. Existing call shape kept: returns the [ProjectMeta] that was saved (or, if the save
+     * failed, the one that was attempted -- use [saveProjectDurably] / [requestSave] to learn about
+     * a failure). The caller's thread must be the one that mutates [engine] (the editor's main
+     * thread): the layer capture below runs on it, synchronously, before this first suspends.
+     */
+    suspend fun saveProject(meta: ProjectMeta, engine: CanvasEngine): ProjectMeta = saveProjectDurably(meta, engine).meta
+
+    /** [saveProject] that also reports failure (disk full, IO error, ...) as a [SaveOutcome] instead of hiding it. */
+    suspend fun saveProjectDurably(meta: ProjectMeta, engine: CanvasEngine): SaveOutcome = requestSave(meta, engine).await()
+
+    /**
+     * Captures [engine] NOW, on the calling thread, and queues the write on the app-scoped
+     * [SaveCoordinator]; returns a [Deferred] for the result. Deliberately not `suspend`: a caller
+     * that is about to leave (Back pressed, ON_STOP) can call this synchronously, so the capture
+     * has already happened before its own coroutine scope can be cancelled -- and even if the
+     * caller never awaits, the save still runs to completion.
+     *
+     * Capture (cheap, main thread): the layer list/metadata as a value, plus one bitmap copy per
+     * layer whose [Layer.contentVersion] differs from what is already on disk. Everything after
+     * that (PNG encode, fsync, rename, thumbnail) touches only those copies, so a layer delete
+     * (which recycles the live bitmap), undo (erase + redraw in place) or the next stroke mid-encode
+     * can neither crash the save nor tear the file.
+     */
+    fun requestSave(meta: ProjectMeta, engine: CanvasEngine): Deferred<SaveOutcome> {
+        val state = coordinator.stateFor(meta.id)
+        val plan = try {
+            capture(meta, engine, state)
+        } catch (t: Throwable) {
+            // e.g. OOM copying a big layer, or a layer whose bitmap is already recycled.
+            return CompletableDeferred(failureOutcome(meta, t))
+        }
+        return coordinator.submit(state, plan, run = { runSave(state, it) }, onFailure = ::failureOutcome)
+    }
+
+    private fun capture(meta: ProjectMeta, engine: CanvasEngine, state: ProjectState): SavePlan {
+        val layers = engine.layers.toList()
         val updated = meta.copy(
             updatedAt = System.currentTimeMillis(),
-            layers = engine.layers.mapIndexed { i, l -> LayerMeta(l.id, l.name, l.opacity, l.visible, l.blendMode.label, i, l.locked, l.isReferenceImage) },
+            layers = layers.mapIndexed { i, l -> LayerMeta(l.id, l.name, l.opacity, l.visible, l.blendMode.label, i, l.locked, l.isReferenceImage) },
             activeLayerIndex = engine.activeLayerIndex,
         )
-        persist(updated, engine)
-        DiagnosticLog.log(appContext, "ProjectRepository", "Project saved (id=${updated.id}, name=${updated.name}, layers=${updated.layers.size})")
-        updated
+        val (thumbW, thumbH) = thumbSize(engine.widthPx, engine.heightPx)
+        val captures = ArrayList<LayerCapture>(layers.size)
+        try {
+            for (l in layers) {
+                val version = l.contentVersion
+                var full: Bitmap? = null
+                var small: Bitmap? = null
+                if (state.savedVersions[l.id] != version) {
+                    // PNG out of date (or never written): the one memcpy we can't avoid. The
+                    // thumbnail piece is derived from this copy later, off the main thread.
+                    full = l.snapshot()
+                } else if (state.thumbs[l.id]?.version != version) {
+                    // PNG current, but the gallery thumbnail has no cached piece for this layer yet
+                    // (first save after opening): a ~1MB scaled copy, not a full-resolution one.
+                    small = downscale(l.bitmap, thumbW, thumbH)
+                }
+                captures += LayerCapture(l.id, version, l.visible, l.opacity, l.blendMode, full, small)
+            }
+        } catch (t: Throwable) {
+            captures.forEach { it.full?.recycle(); it.small?.recycle() }
+            throw t
+        }
+        return SavePlan(updated, captures)
+    }
+
+    /** Runs on the coordinator's IO thread, under the project lock. Any exception becomes a failed [SaveOutcome] upstream. */
+    private fun runSave(state: ProjectState, plan: SavePlan): SaveOutcome {
+        val meta = plan.meta
+        dirFor(meta.id).mkdirs()
+        val ldir = layersDir(meta.id)
+
+        // 1. Changed layer PNGs, each replaced atomically. A layer whose version an EARLIER queued
+        //    save already committed is skipped (the plan was captured before that save finished).
+        val written = ArrayList<LayerCapture>()
+        for (cap in plan.layers) {
+            val full = cap.full ?: continue
+            if (state.savedVersions[cap.id] == cap.version) continue
+            DurableFile.write(File(ldir, "${cap.id}.png")) { out ->
+                if (!hooks.encodeLayer(cap.id, full, out)) throw IOException("PNG encode failed for layer ${cap.id}")
+            }
+            written += cap
+        }
+
+        // 2. COMMIT POINT: metadata.json, with the previous good one rotated to .bak. Until this
+        //    rename lands, a reader (or a restart after a kill) sees the previous project.
+        hooks.beforeMetadataCommit(meta.id)
+        DurableFile.writeText(metaFile(meta.id), json.encodeToString(meta), keepBackup = true, backupIsValid = ::isParseableMeta)
+        for (cap in written) state.savedVersions[cap.id] = cap.version
+        val referenced = meta.layers.map { it.id }.toSet()
+        state.savedVersions.keys.filter { it !in referenced }.forEach { state.savedVersions.remove(it) }
+
+        // 3. Only now that the new state is committed: drop layer files it no longer references and
+        //    any interrupted write's tmp files. (Used to happen FIRST, so a kill between the delete
+        //    and the metadata write left old metadata pointing at a PNG that no longer existed.)
+        val keepNames = referenced.map { "$it.png" }.toSet()
+        ldir.listFiles()?.forEach { f ->
+            if (f.name.endsWith(".tmp") || (f.name.endsWith(".png") && f.name !in keepNames)) runCatching { f.delete() }
+        }
+        DurableFile.sweepTmp(dirFor(meta.id))
+
+        // 4. The gallery thumbnail is a convenience, not project data: its failure is logged, never fails the save.
+        try {
+            writeThumbnail(state, plan)
+        } catch (t: Throwable) {
+            DiagnosticLog.log(appContext, "ProjectRepository", "Thumbnail update failed for project ${meta.id} (${t.javaClass.simpleName}: ${t.message}); project itself saved fine")
+        }
+        DiagnosticLog.log(appContext, "ProjectRepository", "Project saved (id=${meta.id}, name=${meta.name}, layers=${meta.layers.size}, reencoded=${written.size})")
+        return SaveOutcome(meta)
+    }
+
+    /**
+     * Builds thumbnail.png from per-layer thumbnail-resolution pieces instead of a full-resolution
+     * flatten of every live layer (which read the live bitmaps off-main AND allocated a canvas-sized
+     * bitmap just to shrink it). A piece is derived from this save's own snapshot when the layer
+     * changed, and reused from [ProjectState.thumbs] when it did not -- which is what lets unchanged
+     * layers skip snapshotting entirely.
+     */
+    private fun writeThumbnail(state: ProjectState, plan: SavePlan) {
+        val meta = plan.meta
+        val (thumbW, thumbH) = thumbSize(meta.widthPx, meta.heightPx)
+        for (cap in plan.layers) {
+            if (cap.full != null && state.thumbs[cap.id]?.version == cap.version) continue
+            val piece = cap.small ?: cap.full?.let { downscale(it, thumbW, thumbH) } ?: continue
+            cap.small = null // ownership moves to the cache; the plan must not recycle it
+            state.thumbs.put(cap.id, ThumbEntry(cap.version, piece))?.bitmap?.recycle()
+        }
+        val ids = plan.layers.map { it.id }.toSet()
+        state.thumbs.keys.filter { it !in ids }.forEach { state.thumbs.remove(it)?.bitmap?.recycle() }
+
+        val inputs = plan.layers
+            .filter { it.visible && it.opacity > 0f }
+            .mapNotNull { cap -> state.thumbs[cap.id]?.let { LayerFlattener.Input(it.bitmap, cap.opacity, cap.blendMode) } }
+        val thumb = LayerFlattener.flatten(thumbW, thumbH, meta.widthPx, meta.heightPx, inputs)
+        try {
+            DurableFile.write(thumbFile(meta.id)) { out ->
+                if (!thumb.compress(Bitmap.CompressFormat.PNG, 90, out)) throw IOException("thumbnail encode failed")
+            }
+        } finally {
+            thumb.recycle()
+        }
+    }
+
+    private fun thumbSize(widthPx: Int, heightPx: Int, maxDim: Int = 512): Pair<Int, Int> {
+        val scale = minOf(1f, maxDim.toFloat() / maxOf(widthPx, heightPx, 1))
+        return (widthPx * scale).toInt().coerceAtLeast(1) to (heightPx * scale).toInt().coerceAtLeast(1)
+    }
+
+    /** Always a NEW bitmap (never [source] itself, unlike Bitmap.createScaledBitmap at equal size), so the caller can recycle it freely. */
+    private fun downscale(source: Bitmap, width: Int, height: Int): Bitmap {
+        val out = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
+        Canvas(out).drawBitmap(source, null, Rect(0, 0, width, height), Paint(Paint.FILTER_BITMAP_FLAG))
+        return out
+    }
+
+    private fun failureOutcome(meta: ProjectMeta, t: Throwable): SaveOutcome {
+        val failure = classifyFailure(t, runCatching { projectsRoot.usableSpace }.getOrNull())
+        DiagnosticLog.log(appContext, "ProjectRepository", "Save FAILED for project ${meta.id} (${failure.kind}): ${failure.detail}\n${t.stackTraceToString().take(1500)}")
+        return SaveOutcome(meta, failure)
+    }
+
+    /** First save of a brand-new project (create/createFromTemplate): the engine is private to the caller, so this awaits the durable write and throws if it failed -- a project that could not be created must not look created. */
+    private suspend fun persistNew(meta: ProjectMeta, engine: CanvasEngine): ProjectMeta {
+        val outcome = requestSave(meta, engine).await()
+        outcome.failure?.let { throw IOException("Couldn't create project: ${it.kind} ${it.detail}") }
+        return outcome.meta
     }
 
     suspend fun renameProject(meta: ProjectMeta, newName: String): ProjectMeta = withContext(Dispatchers.IO) {
         val updated = meta.copy(name = newName, updatedAt = System.currentTimeMillis())
-        metaFile(updated.id).writeText(json.encodeToString(updated))
+        coordinator.withProjectLock(updated.id) {
+            DurableFile.writeText(metaFile(updated.id), json.encodeToString(updated), keepBackup = true, backupIsValid = ::isParseableMeta)
+        }
         updated
     }
 
-    private fun persist(meta: ProjectMeta, engine: CanvasEngine) {
-        dirFor(meta.id).mkdirs()
-        val ldir = layersDir(meta.id)
-        val validNames = engine.layers.map { "${it.id}.png" }.toSet()
-        ldir.listFiles()?.forEach { f -> if (f.name !in validNames) f.delete() }
-        for (layer in engine.layers) {
-            FileOutputStream(File(ldir, "${layer.id}.png")).use { out ->
-                layer.bitmap.compress(Bitmap.CompressFormat.PNG, 100, out)
-            }
-        }
-        metaFile(meta.id).writeText(json.encodeToString(meta))
-        val thumb = createThumbnail(engine)
-        FileOutputStream(thumbFile(meta.id)).use { out -> thumb.compress(Bitmap.CompressFormat.PNG, 90, out) }
-        thumb.recycle()
-    }
-
-    private fun createThumbnail(engine: CanvasEngine, maxDim: Int = 512): Bitmap {
-        val flat = engine.flatten()
-        val scale = maxDim.toFloat() / maxOf(flat.width, flat.height)
-        val bmp = if (scale < 1f) {
-            Bitmap.createScaledBitmap(flat, (flat.width * scale).toInt().coerceAtLeast(1), (flat.height * scale).toInt().coerceAtLeast(1), true)
-        } else {
-            flat
-        }
-        if (bmp !== flat) flat.recycle()
-        return bmp
-    }
-
     suspend fun deleteProject(id: String) = withContext(Dispatchers.IO) {
-        dirFor(id).deleteRecursively()
+        coordinator.withProjectLock(id) {
+            dirFor(id).deleteRecursively()
+            val state = coordinator.stateFor(id)
+            state.savedVersions.clear()
+            state.clearThumbs()
+        }
         Unit
     }
 
@@ -392,11 +614,18 @@ class ProjectRepository(private val appContext: Context) {
     suspend fun exportProjectZip(id: String): File = withContext(Dispatchers.IO) {
         val src = dirFor(id)
         val zipFile = File(appContext.cacheDir, "export_$id.zip")
-        ZipOutputStream(FileOutputStream(zipFile)).use { zos ->
-            src.walkTopDown().filter { it.isFile }.forEach { f ->
-                zos.putNextEntry(ZipEntry(f.relativeTo(src).path))
-                f.inputStream().use { it.copyTo(zos) }
-                zos.closeEntry()
+        // Under the project lock so the zip can't capture a half-committed save (new layer PNGs
+        // with the old metadata), and without the durability side-files (.tmp/.bak/.corrupt) so
+        // the archive keeps exactly the shape the PC companion has always received.
+        coordinator.withProjectLock(id) {
+            ZipOutputStream(FileOutputStream(zipFile)).use { zos ->
+                src.walkTopDown()
+                    .filter { it.isFile && !it.name.endsWith(".tmp") && !it.name.endsWith(".bak") && !it.name.contains(".corrupt") }
+                    .forEach { f ->
+                        zos.putNextEntry(ZipEntry(f.relativeTo(src).path))
+                        f.inputStream().use { it.copyTo(zos) }
+                        zos.closeEntry()
+                    }
             }
         }
         zipFile
