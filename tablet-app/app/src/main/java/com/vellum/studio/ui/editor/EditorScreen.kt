@@ -88,7 +88,6 @@ import androidx.compose.ui.input.key.type
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
-import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.compose.ui.window.Dialog
@@ -100,10 +99,10 @@ import com.vellum.studio.canvas.gl.LayerCompositorGLView
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import com.vellum.studio.model.CustomBrushRepository
 import com.vellum.studio.model.EditorAutosaver
+import com.vellum.studio.model.LoadResult
 import com.vellum.studio.model.PaletteRepository
 import com.vellum.studio.model.ProjectMeta
 import com.vellum.studio.model.ProjectRepository
-import com.vellum.studio.model.ProjectTooNewException
 import com.vellum.studio.model.RecentColors
 import com.vellum.studio.model.SaveReason
 import com.vellum.studio.model.SaveStatus
@@ -154,10 +153,12 @@ fun EditorScreen(
     var meta by remember { mutableStateOf<ProjectMeta?>(null) }
     var engine by remember { mutableStateOf<CanvasEngine?>(null) }
     var loading by remember { mutableStateOf(true) }
-    // Non-null when the project was refused because a newer build saved it (ProjectTooNewException);
-    // shown instead of the canvas. The gallery already blocks tapping such a card, so this is the
-    // defensive path for any other way in (a stale route, a template that resolved to it).
-    var refusalMessage by remember { mutableStateOf<String?>(null) }
+    // Non-null when the open did not produce an engine (missing, damaged canvas size, out of memory,
+    // unreadable file, or refused because a newer build saved it); shown as an error card instead of
+    // the canvas. While it is set there is no engine and no autosaver, which is what guarantees a
+    // failed open can never write over the project on disk. (The gallery already blocks tapping a
+    // newer-schema card, so that case here is the defensive path for any other way in.)
+    var openFailure by remember { mutableStateOf<LoadResult.Failed?>(null) }
     var layersPanelOpen by remember { mutableStateOf(false) }
     var colorPickerOpen by remember { mutableStateOf(false) }
     var printPresetDialogOpen by remember { mutableStateOf(false) }
@@ -307,7 +308,8 @@ fun EditorScreen(
     LaunchedEffect(Unit) { keyboardFocusRequester.requestFocus() }
 
     LaunchedEffect(loading) {
-        if (!loading && !settingsRepository.keyboardShortcutsHintShown) {
+        // Not over an error card: there is no canvas for the shortcuts to act on, and showing it would burn the one-time hint.
+        if (!loading && openFailure == null && !settingsRepository.keyboardShortcutsHintShown) {
             // Set the moment we decide to show it (not after the Snackbar's dismissed) -- backing
             // out of the editor mid-Snackbar shouldn't leave it eligible to fire again next project.
             settingsRepository.keyboardShortcutsHintShown = true
@@ -322,11 +324,13 @@ fun EditorScreen(
 
     LaunchedEffect(projectId) {
         loading = true
-        val loaded = try {
-            repository.loadProjectReporting(projectId)
-        } catch (e: ProjectTooNewException) {
-            refusalMessage = e.userMessage
-            null
+        openFailure = null
+        val loaded = when (val result = repository.loadProject(projectId)) {
+            is LoadResult.Ok -> result.project
+            is LoadResult.Failed -> {
+                openFailure = result
+                null
+            }
         }
         if (loaded != null) {
             meta = loaded.meta
@@ -386,7 +390,7 @@ fun EditorScreen(
             TopAppBar(
                 title = {
                     Column {
-                        Text(meta?.name ?: "Loading…", maxLines = 1)
+                        Text(meta?.name ?: if (openFailure != null) "Couldn't open project" else "Loading…", maxLines = 1)
                         autosaver?.let { SaveStatusLabel(it.status) }
                     }
                 },
@@ -530,11 +534,11 @@ fun EditorScreen(
     ) { padding ->
         Box(Modifier.fillMaxSize().padding(padding)) {
             when {
-                refusalMessage != null -> Text(
-                    refusalMessage!!,
-                    style = MaterialTheme.typography.bodyLarge,
-                    textAlign = TextAlign.Center,
-                    modifier = Modifier.align(Alignment.Center).padding(32.dp),
+                openFailure != null -> ProjectOpenErrorCard(
+                    failure = openFailure!!,
+                    onBack = { leaveEditor() },
+                    onExportLog = { exportDiagnosticLog(context) },
+                    modifier = Modifier.align(Alignment.Center),
                 )
                 loading || engine == null -> CircularProgressIndicator(Modifier.align(Alignment.Center))
                 else -> {

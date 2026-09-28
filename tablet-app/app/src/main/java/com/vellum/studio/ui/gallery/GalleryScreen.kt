@@ -198,7 +198,15 @@ private fun ProjectCard(project: ProjectSummary, onClick: () -> Unit, onDelete: 
             ) {
                 Column(Modifier.weight(1f)) {
                     Text(project.name, style = MaterialTheme.typography.titleMedium, maxLines = 1)
-                    if (project.isOpenable) {
+                    if (project.isDamaged) {
+                        // Still tappable (isOpenable): the editor then shows WHY, with Back and the
+                        // diagnostic-log export, instead of the card silently doing nothing.
+                        Text(
+                            "Damaged - tap for details",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.error,
+                        )
+                    } else if (project.isOpenable) {
                         Text(
                             DateFormat.getDateInstance(DateFormat.MEDIUM).format(Date(project.updatedAt)),
                             style = MaterialTheme.typography.labelSmall,

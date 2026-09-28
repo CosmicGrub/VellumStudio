@@ -105,18 +105,11 @@ class ProjectSchemaRefusalTest {
         val fresh = repo() // a new process: no in-memory state to lean on
         val listed = fresh.listProjects()
         assertEquals(1, listed.size)
-        try {
-            fresh.loadProject(meta.id)
-            fail("loading a newer-schema project must be refused")
-        } catch (e: ProjectTooNewException) {
-            assertEquals(99, e.projectVersion)
-            assertEquals(ProjectMeta.CURRENT_SCHEMA_VERSION, e.supportedVersion)
-        }
-        try {
-            fresh.loadProjectReporting(meta.id)
-            fail("loadProjectReporting must refuse too")
-        } catch (_: ProjectTooNewException) {
-        }
+        val refused = fresh.loadProject(meta.id)
+        assertTrue("loading a newer-schema project must be refused, was $refused", refused is LoadResult.TooNew)
+        refused as LoadResult.TooNew
+        assertEquals(99, refused.exception.projectVersion)
+        assertEquals(ProjectMeta.CURRENT_SCHEMA_VERSION, refused.exception.supportedVersion)
 
         assertTrue("metadata.json must be byte-identical", metadataBefore.contentEquals(mf.readBytes()))
         assertEquals("no file added, removed or altered anywhere in the project", before, snapshot(dir))
@@ -150,7 +143,7 @@ class ProjectSchemaRefusalTest {
         val (meta, engine) = savedProject(repo())
         // A second save rotates the v1 metadata into .bak, so an older-schema .bak exists on disk.
         paint(engine.layers[0], Color.RED)
-        assertTrue(repo().let { r -> r.loadProjectReporting(meta.id)!!.let { r.saveProjectDurably(it.meta, it.engine).saved } })
+        assertTrue(repo().let { r -> r.loadOk(meta.id).let { r.saveProjectDurably(it.meta, it.engine).saved } })
         val dir = repo().projectDir(meta.id)
         assertTrue(File(dir, "metadata.json.bak").exists())
         rewriteAsFromTheFuture(repo(), meta.id)
@@ -159,11 +152,7 @@ class ProjectSchemaRefusalTest {
         val summary = repo().listProjects().single()
         assertEquals("the older .bak must not be silently loaded in its place", 99, summary.newerSchemaVersion)
         assertEquals("Recovered Project must never appear", "From The Future", summary.name)
-        try {
-            repo().loadProject(meta.id)
-            fail()
-        } catch (_: ProjectTooNewException) {
-        }
+        assertTrue(repo().loadProject(meta.id) is LoadResult.TooNew)
         assertEquals(before, snapshot(dir))
     }
 
@@ -171,7 +160,7 @@ class ProjectSchemaRefusalTest {
     fun `a newer bak with an unparseable metadata json is refused rather than rebuilt from layer files`() = runBlocking {
         val (meta, engine) = savedProject(repo())
         paint(engine.layers[0], Color.RED)
-        repo().let { r -> r.loadProjectReporting(meta.id)!!.let { r.saveProjectDurably(it.meta, it.engine) } }
+        repo().let { r -> r.loadOk(meta.id).let { r.saveProjectDurably(it.meta, it.engine) } }
         val dir = repo().projectDir(meta.id)
         val bak = File(dir, "metadata.json.bak")
         assertTrue(bak.exists())
@@ -181,11 +170,7 @@ class ProjectSchemaRefusalTest {
         val before = snapshot(dir)
 
         assertEquals(42, repo().listProjects().single().newerSchemaVersion)
-        try {
-            repo().loadProject(meta.id)
-            fail()
-        } catch (_: ProjectTooNewException) {
-        }
+        assertTrue(repo().loadProject(meta.id) is LoadResult.TooNew)
         assertEquals(before, snapshot(dir))
     }
 
@@ -196,11 +181,10 @@ class ProjectSchemaRefusalTest {
         metaFile(repo(), meta.id).writeText("not json at all")
         File(dir, "metadata.json.bak").delete()
 
-        val loaded = repo().loadProject(meta.id)
+        val loaded = repo().loadOk(meta.id)
 
-        assertNotNull("recovery is kept for damaged files", loaded)
-        assertEquals("Recovered Project", loaded!!.first.name)
-        assertEquals(2, loaded.second.layers.size)
+        assertEquals("Recovered Project", loaded.meta.name)
+        assertEquals(2, loaded.engine.layers.size)
     }
 
     // ------------------------------------------------------------------ refusal: write paths
@@ -273,13 +257,13 @@ class ProjectSchemaRefusalTest {
         )
 
         val reader = repo()
-        val loaded = reader.loadProject(meta.id)!!
+        val loaded = reader.loadOk(meta.id)
         assertEquals(
             LayerBlendMode.entries.toList() + LayerBlendMode.NORMAL,
-            loaded.second.layers.map { it.blendMode },
+            loaded.engine.layers.map { it.blendMode },
         )
 
-        assertTrue(reader.saveProjectDurably(loaded.first, loaded.second).saved)
+        assertTrue(reader.saveProjectDurably(loaded.meta, loaded.engine).saved)
         val written = json.parseToJsonElement(metaFile(repo, meta.id).readText()).jsonObject
         assertEquals(
             "on-disk strings must stay byte-compatible with v0.2.x",
@@ -325,11 +309,11 @@ class ProjectSchemaRefusalTest {
         val saved = repo.saveProjectDurably(meta0, engine)
         assertTrue(saved.failure?.detail, saved.saved)
 
-        val reloaded = repo().loadProject(meta0.id)!!
+        val reloaded = repo().loadOk(meta0.id)
 
-        assertEquals(5, reloaded.first.activeLayerIndex)
-        assertEquals(engine.layers.size, reloaded.second.layers.size)
-        engine.layers.zip(reloaded.second.layers).forEachIndexed { i, (want, got) ->
+        assertEquals(5, reloaded.meta.activeLayerIndex)
+        assertEquals(engine.layers.size, reloaded.engine.layers.size)
+        engine.layers.zip(reloaded.engine.layers).forEachIndexed { i, (want, got) ->
             val what = "layer $i (${want.blendMode})"
             assertEquals(what, want.id, got.id)
             assertEquals(what, want.name, got.name)
@@ -341,7 +325,7 @@ class ProjectSchemaRefusalTest {
             assertEquals("$what pixels", want.bitmap.getPixel(3, 3), got.bitmap.getPixel(3, 3))
         }
         // Stack order is what `order` encodes: it must be the list index, never a re-sort by id.
-        assertEquals(engine.layers.indices.toList(), reloaded.first.layers.map { it.order })
+        assertEquals(engine.layers.indices.toList(), reloaded.meta.layers.map { it.order })
     }
 
     @Test

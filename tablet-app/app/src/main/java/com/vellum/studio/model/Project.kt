@@ -94,7 +94,20 @@ data class ProjectMeta(
     // project instead of creating a duplicate one -- see ColoringBookScreen's tap handler).
     val sourceTemplateId: String? = null,
 ) {
+    /**
+     * False for a canvas size no engine can be built from: zero/negative (garbled metadata whose
+     * dimensions decoded to 0 -- `Bitmap.createBitmap(0, 0)` throws) or beyond [MAX_CANVAS_DIMENSION]
+     * (a corrupted number, not a real canvas). Deliberately NOT a device-memory check: a real project
+     * made at a size this device's heap can't hold is an out-of-memory open, reported as such, not a
+     * damaged one -- rejecting it here would lock the user out of valid artwork.
+     */
+    val hasValidCanvasSize: Boolean
+        get() = widthPx in 1..MAX_CANVAS_DIMENSION && heightPx in 1..MAX_CANVAS_DIMENSION
+
     companion object {
+        /** Well above the largest "Studio" preset (4096) and the usual GPU texture ceiling; only garbage exceeds it. */
+        const val MAX_CANVAS_DIMENSION = 16_384
+
         /**
          * Bump this by exactly 1 and append one matching [ProjectSchemaMigrator.Step] whenever this
          * on-disk shape changes -- that pair is the entire cost of a future format change, instead
@@ -120,9 +133,18 @@ data class ProjectSummary(
     val updatedAt: Long,
     val thumbnailFile: File?,
     val newerSchemaVersion: Int? = null,
+    /**
+     * Non-null for a project whose metadata is present but cannot produce a canvas (see
+     * [UnreadableReason.INVALID_CANVAS_SIZE]). Listed and flagged instead of hidden, so the user
+     * can see it exists, open it to reach the diagnostic-log export, or delete it.
+     */
+    val damage: UnreadableReason? = null,
 ) {
     /** False for a project this build refuses to open (see [newerSchemaVersion]). */
     val isOpenable: Boolean get() = newerSchemaVersion == null
+
+    /** True for a project flagged [damage]; still tappable so the editor's error card can explain and offer the log. */
+    val isDamaged: Boolean get() = damage != null
 }
 
 /** A named starting size for the "New Canvas" dialog. */

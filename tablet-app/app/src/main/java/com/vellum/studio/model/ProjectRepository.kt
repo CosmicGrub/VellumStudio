@@ -16,6 +16,7 @@ import com.vellum.studio.canvas.LayerBlendMode
 import com.vellum.studio.canvas.LayerFlattener
 import com.vellum.studio.util.DiagnosticLog
 import com.vellum.studio.util.DurableFile
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
@@ -63,6 +64,11 @@ import java.util.zip.ZipOutputStream
  * that the next save would then write over the only surviving bytes. None of this changes the
  * on-disk format: `.bak`/`.corrupt` are extra sibling files older builds simply ignore, so no schema
  * migration is needed.
+ *
+ * OPEN FAILURES: [loadProject] returns a [LoadResult] and never throws for a project it cannot
+ * open (missing, damaged canvas size, out of memory, unreadable file, newer schema). A failed open
+ * produces no engine, so nothing in the editor can autosave over the project on disk, and the read
+ * path creates and writes nothing on any of those outcomes.
  *
  * NEWER-SCHEMA REFUSAL: a project whose metadata.json declares a `schemaVersion` above
  * [ProjectMeta.CURRENT_SCHEMA_VERSION] was written by a newer build (the tablet/Fold device
@@ -179,6 +185,14 @@ class ProjectRepository internal constructor(private val appContext: Context, pr
 
         /** The raw file declared [version] > [ProjectMeta.CURRENT_SCHEMA_VERSION]; the rest is read best-effort for the gallery card only. */
         class TooNew(val version: Int, val name: String?, val widthPx: Int, val heightPx: Int, val updatedAt: Long?) : MetaRead
+
+        /**
+         * A metadata file that is there but cannot produce an openable project: [UnreadableReason.INVALID_CANVAS_SIZE]
+         * (decoded fine, but 0x0 or absurd, with no layer PNG to infer a real size from) or
+         * [UnreadableReason.IO_ERROR] (the file exists and could not be read). Unlike "absent" this is
+         * still a project the user owns: listed flagged, and never replaced by a lossy stand-in.
+         */
+        class Damaged(val reason: UnreadableReason, val detail: String, val name: String?, val updatedAt: Long?) : MetaRead
     }
 
     private fun MetaRead.TooNew.toException() = ProjectTooNewException(version, ProjectMeta.CURRENT_SCHEMA_VERSION)
@@ -214,12 +228,20 @@ class ProjectRepository internal constructor(private val appContext: Context, pr
      */
     private fun loadOrRecoverMeta(id: String): MetaRead? {
         val mf = metaFile(id)
-        readMetaFile(id, mf)?.let { return it }
-        readMetaFile(id, DurableFile.bakFor(mf))?.let {
-            if (it is MetaRead.Found) DiagnosticLog.log(appContext, "ProjectRepository", "Project $id: metadata.json missing or unreadable; restored from metadata.json.bak")
-            return it
+        val primary = readMetaFile(id, mf)
+        if (primary is MetaRead.Found || primary is MetaRead.TooNew) return primary
+        // The file exists but could not be READ (not "could not be parsed"): the disk, not the
+        // data, is the problem, so the .bak and the layer-file rebuild are no safer -- and a lossy
+        // "Recovered Project" would overwrite the real metadata on the next save.
+        if (primary is MetaRead.Damaged && primary.reason == UnreadableReason.IO_ERROR) return primary
+        val bak = readMetaFile(id, DurableFile.bakFor(mf))
+        if (bak is MetaRead.Found || bak is MetaRead.TooNew) {
+            if (bak is MetaRead.Found) DiagnosticLog.log(appContext, "ProjectRepository", "Project $id: metadata.json missing, unreadable or without a usable canvas size; restored from metadata.json.bak")
+            return bak
         }
-        return recoverFromLayerFiles(id)?.let { MetaRead.Found(it) }
+        recoverFromLayerFiles(id)?.let { return MetaRead.Found(it) }
+        // Nothing recoverable: a damaged-but-present file is reported as such, "absent" only if nothing was there.
+        return primary ?: bak
     }
 
     /** Parses+migrates+decodes one metadata file (layers 1 and 2 above); null if it's absent or not parseable JSON. */
@@ -233,10 +255,15 @@ class ProjectRepository internal constructor(private val appContext: Context, pr
                 DiagnosticLog.log(appContext, "ProjectRepository", "Project $id: ${file.name} is schema v${e.projectVersion}, newer than this build's v${e.supportedVersion}; refusing to open or overwrite it")
                 return newerSchemaPreview(e.projectVersion, root)
             }
-            MetaRead.Found(
+            withUsableCanvasSize(
+                id,
                 runCatching { json.decodeFromJsonElement<ProjectMeta>(migrated) }
                     .getOrElse { decodeLeniently(id, migrated) },
+                root,
             )
+        } catch (e: IOException) {
+            DiagnosticLog.log(appContext, "ProjectRepository", "${file.name} could not be read for project $id (${e.javaClass.simpleName}: ${e.message})")
+            MetaRead.Damaged(UnreadableReason.IO_ERROR, "${file.name}: ${e.javaClass.simpleName}: ${e.message}", name = null, updatedAt = null)
         } catch (e: Exception) {
             DiagnosticLog.log(appContext, "ProjectRepository", "${file.name} unreadable for project $id (${e.message})")
             null
@@ -252,6 +279,36 @@ class ProjectRepository internal constructor(private val appContext: Context, pr
             widthPx = prim("widthPx")?.intOrNull ?: 0,
             heightPx = prim("heightPx")?.intOrNull ?: 0,
             updatedAt = prim("updatedAt")?.longOrNull,
+        )
+    }
+
+    /**
+     * A decoded [meta] whose canvas size cannot build an engine (0x0 from garbled or missing
+     * dimensions -- `CanvasEngine(0, 0)` throws in `Bitmap.createBitmap` -- or a corrupted huge
+     * number) is repaired from the first of its own layer PNGs that still reports a real size, so
+     * the artwork opens with every other field intact; with no such PNG it is [MetaRead.Damaged].
+     * Nothing is written here: the repaired size only reaches disk if the user then edits and saves.
+     * [raw] is only for the card's timestamp on the damaged path.
+     */
+    private fun withUsableCanvasSize(id: String, meta: ProjectMeta, raw: JsonObject): MetaRead {
+        if (meta.hasValidCanvasSize) return MetaRead.Found(meta)
+        // Not layersDir(): that creates the directory, and a read must not.
+        val ldir = File(dirFor(id), "layers")
+        val inferred = meta.layers.firstNotNullOfOrNull { peekPngDimensions(File(ldir, "${it.id}.png")) }
+        if (inferred != null) {
+            val repaired = meta.copy(widthPx = inferred.first, heightPx = inferred.second)
+            if (repaired.hasValidCanvasSize) {
+                DiagnosticLog.log(appContext, "ProjectRepository", "Project $id: metadata canvas size ${meta.widthPx}x${meta.heightPx} is unusable; using ${inferred.first}x${inferred.second} from a layer image")
+                return MetaRead.Found(repaired)
+            }
+        }
+        val detail = "canvas size ${meta.widthPx}x${meta.heightPx} is unusable and no layer image reports a real size"
+        DiagnosticLog.log(appContext, "ProjectRepository", "Project $id: $detail")
+        return MetaRead.Damaged(
+            UnreadableReason.INVALID_CANVAS_SIZE,
+            detail,
+            name = meta.name.takeIf { it.isNotBlank() },
+            updatedAt = (raw["updatedAt"] as? JsonPrimitive)?.longOrNull,
         )
     }
 
@@ -300,7 +357,7 @@ class ProjectRepository internal constructor(private val appContext: Context, pr
                 .getOrNull()
         }
         val referenced = decodedLayers.map { "${it.id}.png" }.toSet()
-        val orphanLayers = (layersDir(id).listFiles { f -> f.extension == "png" && f.name !in referenced } ?: emptyArray())
+        val orphanLayers = (File(dirFor(id), "layers").listFiles { f -> f.extension == "png" && f.name !in referenced } ?: emptyArray())
             .sortedBy { it.name }
             .mapIndexed { i, f ->
                 LayerMeta(
@@ -313,7 +370,7 @@ class ProjectRepository internal constructor(private val appContext: Context, pr
                 )
             }
         val layers = decodedLayers + orphanLayers
-        val inferredDim = layers.firstNotNullOfOrNull { peekPngDimensions(File(layersDir(id), "${it.id}.png")) }
+        val inferredDim = layers.firstNotNullOfOrNull { peekPngDimensions(File(File(dirFor(id), "layers"), "${it.id}.png")) }
 
         return ProjectMeta(
             id = obj["id"].str(id),
@@ -335,7 +392,8 @@ class ProjectRepository internal constructor(private val appContext: Context, pr
      * when there are no layer files either, i.e. nothing survives to recover.
      */
     private fun recoverFromLayerFiles(id: String): ProjectMeta? {
-        val files = (layersDir(id).listFiles { f -> f.extension == "png" } ?: emptyArray()).sortedBy { it.name }
+        // Not layersDir(): that creates the directory, and probing an id that isn't a project must not leave one behind.
+        val files = (File(dirFor(id), "layers").listFiles { f -> f.extension == "png" } ?: emptyArray()).sortedBy { it.name }
         if (files.isEmpty()) return null
         val dim = files.firstNotNullOfOrNull { peekPngDimensions(it) } ?: return null
         DiagnosticLog.log(appContext, "ProjectRepository", "Rebuilding project $id from ${files.size} orphaned layer file(s); metadata.json was missing or unreadable")
@@ -383,6 +441,17 @@ class ProjectRepository internal constructor(private val appContext: Context, pr
                     updatedAt = read.updatedAt ?: metaFile(dir.name).lastModified(),
                     thumbnailFile = thumbFile(dir.name).takeIf { it.exists() },
                     newerSchemaVersion = read.version,
+                )
+                // Listed flagged, not hidden: hiding it would strand files nobody can see, and the card
+                // is the way to the editor's error card (diagnostic log) or to Delete.
+                is MetaRead.Damaged -> ProjectSummary(
+                    id = dir.name,
+                    name = read.name ?: "Untitled",
+                    widthPx = 0,
+                    heightPx = 0,
+                    updatedAt = read.updatedAt ?: metaFile(dir.name).lastModified(),
+                    thumbnailFile = thumbFile(dir.name).takeIf { it.exists() },
+                    damage = read.reason,
                 )
             }
         }.sortedByDescending { it.updatedAt }
@@ -490,27 +559,48 @@ class ProjectRepository internal constructor(private val appContext: Context, pr
         val quarantinedLayerNames: List<String>,
     )
 
-    /** @throws ProjectTooNewException if the project was saved by a newer build (nothing on disk is touched). */
-    suspend fun loadProject(id: String): Pair<ProjectMeta, CanvasEngine>? =
-        loadProjectReporting(id)?.let { it.meta to it.engine }
-
     /**
-     * [loadProject] plus a report of anything quarantined. Runs under the project lock so it can
-     * never observe (or rename files out from under) a save that is mid-flight from the previous
-     * editor session.
+     * Opens project [id] from disk as a [LoadResult]; never throws for a project it cannot open
+     * (only coroutine cancellation propagates). Runs under the project lock so it can never observe
+     * (or rename files out from under) a save that is mid-flight from the previous editor session.
      *
-     * @throws ProjectTooNewException if the project's metadata.json declares a schema newer than
-     *   this build understands. Thrown before anything is swept, renamed or created in the project
-     *   directory, so a refused project stays byte-for-byte as the newer build left it.
+     * Every failure is decided before the caller has an engine, so there is nothing an autosave
+     * could later write: a refused/damaged/out-of-memory open leaves the project directory as it
+     * was found (a newer-schema refusal or a damaged-metadata verdict happens before anything is
+     * swept, renamed or created; an OOM mid-decode happens before the saved-version baseline is
+     * replaced and gives the partly built engine's heap back). The cause is written to the
+     * diagnostic log, which the editor's error card offers to export.
      */
-    suspend fun loadProjectReporting(id: String): LoadedProject? = withContext(Dispatchers.IO) {
-        coordinator.withProjectLock(id) { loadBlocking(id) }
+    suspend fun loadProject(id: String): LoadResult = withContext(Dispatchers.IO) {
+        try {
+            coordinator.withProjectLock(id) { loadBlocking(id) }
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: OutOfMemoryError) {
+            openFailed(id, UnreadableReason.OUT_OF_MEMORY, e)
+        } catch (e: IOException) {
+            openFailed(id, UnreadableReason.IO_ERROR, e)
+        } catch (e: Exception) {
+            openFailed(id, UnreadableReason.UNEXPECTED, e)
+        }
     }
 
-    private fun loadBlocking(id: String): LoadedProject? {
+    private fun openFailed(id: String, reason: UnreadableReason, t: Throwable): LoadResult.Unreadable {
+        DiagnosticLog.log(appContext, "ProjectRepository", "Project $id: open FAILED ($reason): ${t.javaClass.simpleName}: ${t.message}\n${t.stackTraceToString().take(1500)}")
+        return LoadResult.Unreadable(reason, "${t.javaClass.simpleName}: ${t.message}")
+    }
+
+    private fun loadBlocking(id: String): LoadResult {
         val meta = when (val read = loadOrRecoverMeta(id)) {
-            null -> return null
-            is MetaRead.TooNew -> throw read.toException()
+            null -> {
+                DiagnosticLog.log(appContext, "ProjectRepository", "Project $id: nothing on disk to open")
+                return LoadResult.NotFound
+            }
+            is MetaRead.TooNew -> return LoadResult.TooNew(read.toException())
+            is MetaRead.Damaged -> {
+                DiagnosticLog.log(appContext, "ProjectRepository", "Project $id: not opened (${read.reason}): ${read.detail}")
+                return LoadResult.Unreadable(read.reason, read.detail)
+            }
             is MetaRead.Found -> read.meta
         }
         val state = coordinator.stateFor(id)
@@ -521,15 +611,36 @@ class ProjectRepository internal constructor(private val appContext: Context, pr
         val engine = CanvasEngine(meta.widthPx, meta.heightPx)
         val quarantined = mutableListOf<String>()
         val loadedVersions = HashMap<String, Int>()
+        try {
+            decodeLayersInto(engine, meta, id, ldir, quarantined, loadedVersions)
+        } catch (t: Throwable) {
+            // OOM on layer 3 of 5 must give the heap back (it is what the user needs to retry) and
+            // must not leave a half-built engine behind; state.savedVersions has not been touched.
+            engine.recycleAll()
+            throw t
+        }
+        if (engine.layers.isEmpty()) engine.addLayer("Layer 1")
+        engine.activeLayerIndex = meta.activeLayerIndex.coerceIn(0, engine.layers.size - 1)
+        // Fresh baseline for dirty tracking: a new Layer's contentVersion restarts at 0, so versions
+        // remembered from any earlier engine for this project would be meaningless.
+        state.savedVersions.clear()
+        state.savedVersions.putAll(loadedVersions)
+        state.clearThumbs()
+        DiagnosticLog.log(appContext, "ProjectRepository", "Project opened (id=$id, name=${meta.name}, layers=${engine.layers.size})")
+        return LoadResult.Ok(LoadedProject(meta, engine, quarantined))
+    }
+
+    private fun decodeLayersInto(engine: CanvasEngine, meta: ProjectMeta, id: String, ldir: File, quarantined: MutableList<String>, loadedVersions: MutableMap<String, Int>) {
         for (lm in meta.layers.sortedBy { it.order }) {
             val file = File(ldir, "${lm.id}.png")
             // BitmapFactory.decode* returns an IMMUTABLE bitmap unless inMutable is set — miss this
             // and every reopened project crashes the instant you draw, since strokes construct a
             // Canvas directly around the layer bitmap. inMutable requires software decoding (no
             // hardware Bitmap.Config), which is what we want anyway since we mutate these in place.
+            // (Set in SaveHooks.decodeLayer, the seam a test uses to make a decode run out of heap.)
             var decoded: Bitmap? = null
             if (file.exists()) {
-                decoded = BitmapFactory.decodeFile(file.path, BitmapFactory.Options().apply { inMutable = true; inPreferredConfig = Bitmap.Config.ARGB_8888 })
+                decoded = hooks.decodeLayer(lm.id, file)
                 if (decoded == null) {
                     // Used to become a silent blank layer whose next save overwrote the only
                     // surviving bytes. Set the file aside instead, so a truncated PNG stays
@@ -550,15 +661,6 @@ class ProjectRepository internal constructor(private val appContext: Context, pr
             // blank stand-in must stay dirty so the next save writes a real file for it.
             if (decoded != null) loadedVersions[lm.id] = layer.contentVersion
         }
-        if (engine.layers.isEmpty()) engine.addLayer("Layer 1")
-        engine.activeLayerIndex = meta.activeLayerIndex.coerceIn(0, engine.layers.size - 1)
-        // Fresh baseline for dirty tracking: a new Layer's contentVersion restarts at 0, so versions
-        // remembered from any earlier engine for this project would be meaningless.
-        state.savedVersions.clear()
-        state.savedVersions.putAll(loadedVersions)
-        state.clearThumbs()
-        DiagnosticLog.log(appContext, "ProjectRepository", "Project opened (id=$id, name=${meta.name}, layers=${engine.layers.size})")
-        return LoadedProject(meta, engine, quarantined)
     }
 
     /**

@@ -112,8 +112,8 @@ class EditorAutosaverTest {
     private fun openEditor(repo: ProjectRepository, name: String = "Auto", size: Int = 64): Editor = runBlocking {
         val (created, tmp) = repo.createProject(name, size, size)
         tmp.layers.forEach { it.bitmap.recycle() }
-        val (meta, engine) = repo.loadProject(created.id)!!
-        Editor(repo, meta, engine, repo.openAutosaver(meta, engine))
+        val loaded = repo.loadOk(created.id)
+        Editor(repo, loaded.meta, loaded.engine, repo.openAutosaver(loaded.meta, loaded.engine))
     }
 
     /** One "stroke": pixels change, the layer version and the engine revision bump -- what endStroke does. */
@@ -169,14 +169,14 @@ class EditorAutosaverTest {
 
         // Before the lifecycle event nothing is on disk: this is the pre-fix world, where a kill
         // here loses both strokes and the blend mode.
-        val before = ProjectRepository(app, SaveHooks()).loadProject(ed.meta.id)!!.second
+        val before = ProjectRepository(app, SaveHooks()).loadOk(ed.meta.id).engine
         assertEquals(Color.TRANSPARENT, before.layers[0].bitmap.getPixel(3, 3))
         assertEquals(LayerBlendMode.NORMAL, before.layers[0].blendMode)
 
         owner.goToBackground() // Home; then `adb shell am kill` == "a brand-new repository reads the disk"
         ed.saver.flush(SaveReason.BACK).await() // waits for the in-flight ON_STOP save, does not start another
 
-        val after = ProjectRepository(app, SaveHooks()).loadProject(ed.meta.id)!!.second
+        val after = ProjectRepository(app, SaveHooks()).loadOk(ed.meta.id).engine
         assertEquals(Color.RED, after.layers[0].bitmap.getPixel(3, 3))
         assertEquals(Color.BLUE, after.layers[0].bitmap.getPixel(5, 5))
         assertEquals(LayerBlendMode.MULTIPLY, after.layers[0].blendMode)
@@ -198,7 +198,7 @@ class EditorAutosaverTest {
         owner.goToBackground()
         ed.saver.flush(SaveReason.BACK).await()
 
-        val reloaded = ProjectRepository(app, SaveHooks()).loadProject(ed.meta.id)!!.second
+        val reloaded = ProjectRepository(app, SaveHooks()).loadOk(ed.meta.id).engine
         assertEquals(listOf("Layer 1", "Sketch"), reloaded.layers.map { it.name })
         assertEquals(0.4f, reloaded.layers[0].opacity, 0.001f)
         assertTrue(reloaded.layers[0].locked)
@@ -279,7 +279,7 @@ class EditorAutosaverTest {
         pending.commit(layer.snapshot())
         ed.saver.flush(SaveReason.BACK).await()
         assertFalse(ed.saver.isDirty)
-        assertEquals(Color.RED, ProjectRepository(app, SaveHooks()).loadProject(ed.meta.id)!!.second.layers[0].bitmap.getPixel(4, 4))
+        assertEquals(Color.RED, ProjectRepository(app, SaveHooks()).loadOk(ed.meta.id).engine.layers[0].bitmap.getPixel(4, 4))
 
         // Undo rewrites pixels but is not a stroke: before the engine owned the revision bump this
         // was only marked dirty if the calling screen remembered to, and otherwise stayed unsaved.
@@ -287,13 +287,13 @@ class EditorAutosaverTest {
         assertTrue("undo must mark the project dirty", ed.saver.isDirty)
         owner.goToBackground()
         ed.saver.flush(SaveReason.BACK).await()
-        assertEquals(Color.TRANSPARENT, ProjectRepository(app, SaveHooks()).loadProject(ed.meta.id)!!.second.layers[0].bitmap.getPixel(4, 4))
+        assertEquals(Color.TRANSPARENT, ProjectRepository(app, SaveHooks()).loadOk(ed.meta.id).engine.layers[0].bitmap.getPixel(4, 4))
 
         assertTrue(ed.engine.redo())
         assertTrue("redo must mark the project dirty", ed.saver.isDirty)
         owner.goToBackground()
         ed.saver.flush(SaveReason.BACK).await()
-        assertEquals(Color.RED, ProjectRepository(app, SaveHooks()).loadProject(ed.meta.id)!!.second.layers[0].bitmap.getPixel(4, 4))
+        assertEquals(Color.RED, ProjectRepository(app, SaveHooks()).loadOk(ed.meta.id).engine.layers[0].bitmap.getPixel(4, 4))
 
         // Nothing left to redo: a no-op that must not dirty the project (a free ON_STOP stays free).
         assertFalse(ed.engine.redo())
@@ -472,7 +472,7 @@ class EditorAutosaverTest {
         hooks.release()
 
         withTimeout(10_000) { while (ed.saver.status != SaveStatus.SAVED) delay(20) }
-        val reloaded = ProjectRepository(app, SaveHooks()).loadProject(ed.meta.id)!!.second
+        val reloaded = ProjectRepository(app, SaveHooks()).loadOk(ed.meta.id).engine
         assertEquals(Color.MAGENTA, reloaded.layers[0].bitmap.getPixel(7, 7))
     }
 
@@ -511,7 +511,7 @@ class EditorAutosaverTest {
         repo.onTrimMemory(ComponentCallbacks2.TRIM_MEMORY_UI_HIDDEN)
         assertFalse("UI_HIDDEN captured the edit", ed.saver.isDirty)
         ed.saver.flush(SaveReason.BACK).await()
-        val reloaded = ProjectRepository(app, SaveHooks()).loadProject(ed.meta.id)!!.second
+        val reloaded = ProjectRepository(app, SaveHooks()).loadOk(ed.meta.id).engine
         assertEquals(Color.CYAN, reloaded.layers[0].bitmap.getPixel(2, 2))
 
         ed.saver.close() // editor left: no longer reachable from the process-wide callback
@@ -527,7 +527,7 @@ class EditorAutosaverTest {
         stroke(ed.engine, 6, 6, Color.GREEN)
         ed.saver.close() // EditorScreen's onDispose
         ed.saver.flush(SaveReason.BACK).await()
-        val reloaded = ProjectRepository(app, SaveHooks()).loadProject(ed.meta.id)!!.second
+        val reloaded = ProjectRepository(app, SaveHooks()).loadOk(ed.meta.id).engine
         assertEquals(Color.GREEN, reloaded.layers[0].bitmap.getPixel(6, 6))
     }
 }

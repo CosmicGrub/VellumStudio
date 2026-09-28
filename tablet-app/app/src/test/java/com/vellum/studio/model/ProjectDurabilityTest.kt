@@ -145,7 +145,7 @@ class ProjectDurabilityTest {
         assertTrue("every queued/superseded request must still get a successful outcome", outcomes.all { it.saved })
         assertEquals("saves for one project must be strictly serialized", 1, hooks.maxConcurrentEncodes.get())
 
-        val reloaded = repo().loadProjectReporting(meta.id)!!
+        val reloaded = repo().loadOk(meta.id)
         assertTrue(reloaded.quarantinedLayerNames.isEmpty())
         assertEquals(3, reloaded.engine.layers.size)
         // The LAST edit wins: coalescing may drop intermediate rounds but never the newest state.
@@ -173,7 +173,7 @@ class ProjectDurabilityTest {
         assertEquals(4, results.size)
         assertTrue(results.all { it.saved })
         assertEquals(1, hooks.maxConcurrentEncodes.get())
-        runBlocking { repo().loadProjectReporting(meta.id)!! }.engine.layers.forEach {
+        runBlocking { repo().loadOk(meta.id) }.engine.layers.forEach {
             assertEquals(Color.MAGENTA, it.bitmap.getPixel(0, 0))
         }
     }
@@ -228,7 +228,7 @@ class ProjectDurabilityTest {
         assertTrue(outcome.failure?.detail, outcome.saved)
 
         // The committed project is the state AT CAPTURE: three layers, original colors.
-        val reloaded = repo().loadProjectReporting(meta.id)!!
+        val reloaded = repo().loadOk(meta.id)
         assertTrue(reloaded.quarantinedLayerNames.isEmpty())
         assertEquals(ids, reloaded.engine.layers.map { it.id })
         assertEquals(colors, reloaded.engine.layers.map { it.bitmap.getPixel(0, 0) })
@@ -236,7 +236,7 @@ class ProjectDurabilityTest {
         // ...and the post-mutation state saves cleanly on top of it afterwards.
         val second = repo.saveProjectDurably(outcome.meta, engine)
         assertTrue(second.saved)
-        val after = repo().loadProjectReporting(meta.id)!!
+        val after = repo().loadOk(meta.id)
         assertEquals(engine.layers.map { it.id }, after.engine.layers.map { it.id })
         assertEquals(Color.BLACK, after.engine.layers[0].bitmap.getPixel(0, 0))
     }
@@ -277,7 +277,7 @@ class ProjectDurabilityTest {
 
         val hooks = TestHooks()
         val second = repo(hooks)
-        val loaded = second.loadProjectReporting(meta.id)!!
+        val loaded = second.loadOk(meta.id)
         assertTrue(second.saveProjectDurably(loaded.meta, loaded.engine).saved)
 
         assertTrue("reopen + save must not re-encode layers that came straight off disk", hooks.encodedIds.isEmpty())
@@ -307,7 +307,7 @@ class ProjectDurabilityTest {
         // Restart: a brand-new repository. Structure is exactly the previous commit; nothing is
         // quarantined, nothing is blank.
         val restarted = repo()
-        val reloaded = restarted.loadProjectReporting(meta.id)!!
+        val reloaded = restarted.loadOk(meta.id)
         assertEquals(previousIds, reloaded.engine.layers.map { it.id })
         assertTrue(reloaded.quarantinedLayerNames.isEmpty())
         assertEquals(meta.name, reloaded.meta.name)
@@ -320,7 +320,7 @@ class ProjectDurabilityTest {
         // wrongly recorded as saved when the commit didn't happen).
         hooks.failBeforeMetadata = null
         assertTrue(repo.saveProjectDurably(meta, engine).saved)
-        val finalLoad = repo().loadProjectReporting(meta.id)!!
+        val finalLoad = repo().loadOk(meta.id)
         assertEquals(engine.layers.map { it.id }, finalLoad.engine.layers.map { it.id })
         assertEquals(Color.BLACK, finalLoad.engine.layers.last().bitmap.getPixel(0, 0))
         assertEquals(Color.WHITE, finalLoad.engine.layers.first().bitmap.getPixel(0, 0))
@@ -338,7 +338,7 @@ class ProjectDurabilityTest {
         hooks.failBeforeMetadata = IOException("simulated process kill")
         assertFalse(repo.saveProjectDurably(meta, engine).saved)
         assertTrue("old metadata still references it, so the file must survive a failed commit", doomedFile.exists())
-        val stillOld = repo().loadProjectReporting(meta.id)!!
+        val stillOld = repo().loadOk(meta.id)
         assertEquals(3, stillOld.engine.layers.size)
         assertEquals(Color.BLUE, stillOld.engine.layers[2].bitmap.getPixel(0, 0))
 
@@ -359,7 +359,7 @@ class ProjectDurabilityTest {
         val truncatedBytes = victimFile.readBytes()
 
         val reopened = repo()
-        val loaded = reopened.loadProjectReporting(meta.id)!!
+        val loaded = reopened.loadOk(meta.id)
         assertEquals(listOf(victim.name), loaded.quarantinedLayerNames)
         val corrupt = File(victimFile.path + ".corrupt")
         assertTrue("damaged bytes are kept, not deleted", corrupt.exists())
@@ -373,7 +373,7 @@ class ProjectDurabilityTest {
         // Saving afterwards writes a real file for the layer but leaves the quarantined bytes alone.
         assertTrue(reopened.saveProjectDurably(loaded.meta, loaded.engine).saved)
         assertTrue(truncatedBytes.contentEquals(corrupt.readBytes()))
-        val again = repo().loadProjectReporting(meta.id)!!
+        val again = repo().loadOk(meta.id)
         assertTrue("no repeat warning once the layer has a valid file again", again.quarantinedLayerNames.isEmpty())
         assertEquals(3, again.engine.layers.size)
     }
@@ -392,7 +392,7 @@ class ProjectDurabilityTest {
         assertTrue(bakFile.exists())
         RandomAccessFile(metaFile, "rw").use { it.setLength(5) }
 
-        val loaded = repo().loadProjectReporting(meta.id)!!
+        val loaded = repo().loadOk(meta.id)
         assertEquals("real name, not 'Recovered Project'", "Durable", loaded.meta.name)
         assertEquals(engine.layers.map { it.id }, loaded.engine.layers.map { it.id })
         assertEquals("previous good version's layer name, not 'Recovered Layer N'", "Sketch", loaded.engine.layers[0].name)
@@ -415,14 +415,14 @@ class ProjectDurabilityTest {
 
         val layersDir = File(repo.projectDir(meta.id), "layers")
         assertTrue("half-written tmp files are removed", layersDir.listFiles()!!.none { it.name.endsWith(".tmp") })
-        val reloaded = repo().loadProjectReporting(meta.id)!!
+        val reloaded = repo().loadOk(meta.id)
         assertTrue(reloaded.quarantinedLayerNames.isEmpty())
         assertEquals("the last good save is untouched", colors, reloaded.engine.layers.map { it.bitmap.getPixel(0, 0) })
 
         // Once space frees up the very next save succeeds with everything that was pending.
         hooks.failEncode = null
         assertTrue(repo.saveProjectDurably(outcome.meta, engine).saved)
-        assertEquals(Color.WHITE, repo().loadProjectReporting(meta.id)!!.engine.layers[0].bitmap.getPixel(0, 0))
+        assertEquals(Color.WHITE, repo().loadOk(meta.id).engine.layers[0].bitmap.getPixel(0, 0))
     }
 
     @Test

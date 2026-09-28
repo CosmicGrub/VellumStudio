@@ -1,6 +1,7 @@
 package com.vellum.studio.model
 
 import android.graphics.Bitmap
+import android.graphics.BitmapFactory
 import com.vellum.studio.canvas.LayerBlendMode
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
@@ -10,6 +11,7 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import java.io.File
 import java.io.IOException
 import java.io.OutputStream
 import java.util.concurrent.ConcurrentHashMap
@@ -50,7 +52,8 @@ class SaveFailureNotice(val projectId: String, val projectName: String, val fail
  * uses this default. Kept as a tiny open class rather than sprinkling `if (testing)` through the
  * pipeline: tests can observe/slow/fail the two places a real device can be killed or run out of
  * space (encoding a layer, and the gap between the last layer rename and the metadata commit)
- * without mocking the filesystem.
+ * without mocking the filesystem -- and the one place a load runs out of heap (decoding a layer),
+ * which a small test bitmap can never reach on its own.
  */
 internal open class SaveHooks {
     /** Encodes one layer snapshot as PNG. Returns false if the encoder itself failed. */
@@ -60,6 +63,10 @@ internal open class SaveHooks {
     /** Called after every changed layer file is renamed into place and before metadata.json is
      * written -- throwing here reproduces "process killed between the two" exactly. */
     open fun beforeMetadataCommit(projectId: String) {}
+
+    /** Decodes one layer PNG as a mutable ARGB_8888 bitmap; null if the file isn't a decodable image. May throw [OutOfMemoryError]. */
+    open fun decodeLayer(layerId: String, file: File): Bitmap? =
+        BitmapFactory.decodeFile(file.path, BitmapFactory.Options().apply { inMutable = true; inPreferredConfig = Bitmap.Config.ARGB_8888 })
 }
 
 /**
