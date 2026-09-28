@@ -36,7 +36,7 @@
              is handled in place instead of recreating it. A recreate reloads the editor from disk
              and silently drops any strokes/undo history that hadn't been saved yet, so the list
              must cover what a real tablet session actually triggers: attaching/detaching the Book
-             Cover Keyboard (keyboard, navigation -- keyboardHidden alone does NOT cover this; the
+             Cover Keyboard (keyboard, navigation; keyboardHidden alone does NOT cover this; the
              app registers keyboard shortcuts specifically for that accessory), changing the system
              font size (fontScale), switching the system language (locale, layoutDirection), and
              fold/resize/rotation/dark-mode changes. Compose re-reads LocalConfiguration on each of
