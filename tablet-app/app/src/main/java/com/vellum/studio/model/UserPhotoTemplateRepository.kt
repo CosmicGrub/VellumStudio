@@ -6,16 +6,19 @@ import android.graphics.Paint
 import android.graphics.RectF
 import com.vellum.studio.art.ColoringTemplate
 import com.vellum.studio.canvas.PhotoConverter
+import com.vellum.studio.util.DiagnosticLog
+import com.vellum.studio.util.DurableFile
 import com.vellum.studio.util.FileBitmapCache
+import com.vellum.studio.util.JsonFileStore
+import com.vellum.studio.util.RecoveryNotices
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.Serializable
-import kotlinx.serialization.decodeFromString
-import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import java.io.File
+import java.io.IOException
 import java.util.UUID
 
 /**
@@ -53,82 +56,218 @@ data class UserPhotoTemplate(
  * [com.vellum.studio.util.AssetBitmapCache] (context.assets) -- every other call site that
  * already consumes `ColoringTemplate` generically (gallery thumbnailing, rasterize-to-layer,
  * paint-by-number's region detector, printing) needs no changes to also handle these.
+ *
+ * DATA SAFETY: the source photo is NOT kept, so the two converted files are the only copy of what
+ * the user imported -- an index that reads as empty would orphan them all. So the index goes through
+ * [JsonFileStore] (atomic writes; a damaged index is set aside as `index.json.corrupt`, never
+ * overwritten), and because file names are deterministic (`photo_<uuid>_lineart.png` +
+ * `_reference.jpg`) a lost or damaged index is REBUILT by pairing the files still on disk
+ * ([recoverOrphans]) -- the same last-resort idea as ProjectRepository.recoverFromLayerFiles. Image
+ * files are written atomically too and a failed encode (Bitmap.compress returns false on a full
+ * disk) fails the save and removes the partial files instead of indexing a truncated image.
+ * [delete] is a soft delete (files move to a `trash` folder) so the gallery can offer Undo.
  */
-class UserPhotoTemplateRepository(private val appContext: Context) {
+class UserPhotoTemplateRepository(private val appContext: Context, recovery: RecoveryNotices = RecoveryNotices()) {
 
-    private val json = Json { ignoreUnknownKeys = true; prettyPrint = true }
+    private val json = Json { ignoreUnknownKeys = true; coerceInputValues = true; prettyPrint = true }
     private val writeLock = Mutex()
 
     private val baseDir: File
         get() = File(appContext.getExternalFilesDir(null), "photo_templates").apply { mkdirs() }
 
-    private val indexFile: File
-        get() = File(baseDir, "index.json")
+    private val trashDir: File
+        get() = File(baseDir, TRASH_DIR)
+
+    private val store = JsonFileStore(
+        fileProvider = { File(baseDir, "index.json") },
+        json = json,
+        label = "My Photos",
+        log = { DiagnosticLog.log(appContext, "UserPhotoTemplateRepository", it) },
+        onRecovery = recovery::report,
+    )
+
+    // A fresh process cannot have an Undo snackbar pending, so the first load sweeps whatever a
+    // previous run left in trash (deleted, not undone, then the app was killed) plus stray tmp files.
+    private var startupSwept = false
 
     fun referenceFile(template: UserPhotoTemplate): File = File(baseDir, template.referenceFileName)
     fun lineArtFile(template: UserPhotoTemplate): File = File(baseDir, template.lineArtFileName)
 
-    suspend fun list(): List<UserPhotoTemplate> = withContext(Dispatchers.IO) { loadBlocking() }
-
-    private fun loadBlocking(): List<UserPhotoTemplate> {
-        if (!indexFile.exists()) return emptyList()
-        return runCatching { json.decodeFromString<List<UserPhotoTemplate>>(indexFile.readText()) }.getOrElse { emptyList() }
+    suspend fun list(): List<UserPhotoTemplate> = withContext(Dispatchers.IO) {
+        writeLock.withLock { loadLocked().items }
     }
 
-    private fun saveBlocking(templates: List<UserPhotoTemplate>) {
-        indexFile.writeText(json.encodeToString(templates))
+    private class Loaded(val items: List<UserPhotoTemplate>, val safeToWrite: Boolean)
+
+    /**
+     * Reads the index and reconciles it with the image files on disk. Caller holds [writeLock].
+     * Reconciles only when the index can't be fully trusted (missing, unreadable, or entries
+     * skipped) -- a healthy index is returned as is, with no directory scan.
+     */
+    private fun loadLocked(): Loaded {
+        if (!startupSwept) {
+            startupSwept = true
+            runCatching { trashDir.deleteRecursively() }
+            DurableFile.sweepTmp(baseDir)
+        }
+        val read = store.readList(UserPhotoTemplate.serializer())
+        val trusted = read.state == JsonFileStore.ListRead.State.OK && read.skipped == 0
+        if (trusted) return Loaded(read.items, read.safeToWrite)
+        val known = read.items.map { it.id }.toSet()
+        val recovered = recoverOrphans().filter { it.id !in known }
+        if (recovered.isEmpty()) return Loaded(read.items, read.safeToWrite)
+        val merged = read.items + recovered
+        DiagnosticLog.log(appContext, "UserPhotoTemplateRepository", "Re-indexed ${recovered.size} photo template(s) found on disk without an index entry")
+        if (read.safeToWrite) {
+            runCatching { store.writeList(UserPhotoTemplate.serializer(), merged) }
+                .onFailure { DiagnosticLog.log(appContext, "UserPhotoTemplateRepository", "Could not persist the rebuilt index (${it.message}); will rebuild again next load") }
+        }
+        return Loaded(merged, read.safeToWrite)
+    }
+
+    /**
+     * Rebuilds index records from `photo_<uuid>_lineart.png` + `photo_<uuid>_reference.jpg` pairs.
+     * What the index carried beyond the file names is gone, so a recovered entry gets a generic name
+     * ("Recovered photo N", oldest first), the file's modified time, no preset, and is NOT marked
+     * paint-by-number eligible (that needs a region analysis of the photo we no longer have; the
+     * template is still fully usable to trace or color freely).
+     */
+    private fun recoverOrphans(): List<UserPhotoTemplate> {
+        val lineArts = baseDir.listFiles { f -> f.isFile && f.name.startsWith("photo_") && f.name.endsWith(LINEART_SUFFIX) }
+            ?: return emptyList()
+        return lineArts
+            .mapNotNull { lineArt ->
+                val id = lineArt.name.removeSuffix(LINEART_SUFFIX)
+                val reference = File(baseDir, id + REFERENCE_SUFFIX)
+                if (reference.isFile) Triple(id, lineArt, reference) else null
+            }
+            .sortedBy { (_, lineArt, _) -> lineArt.lastModified() }
+            .mapIndexed { i, (id, lineArt, reference) ->
+                UserPhotoTemplate(
+                    id = id,
+                    name = "Recovered photo ${i + 1}",
+                    createdAtMillis = lineArt.lastModified(),
+                    preset = "RECOVERED",
+                    isPaintByNumberEligible = false,
+                    regionCount = 0,
+                    referenceFileName = reference.name,
+                    lineArtFileName = lineArt.name,
+                )
+            }
     }
 
     /**
      * Writes [result]'s bitmaps to private storage (reference as JPEG q82 matching
      * make_reference()'s REFERENCE_QUALITY, line-art as lossless PNG matching make_lineart()) and
      * appends a new metadata record for them.
+     *
+     * @throws IOException if either image could not be fully written, or the index is damaged and
+     *   could not be set aside (adding to it would overwrite it). On any failure the partial files
+     *   are removed, so nothing half-written is ever indexed.
      */
+    @Throws(IOException::class)
     suspend fun save(name: String, preset: PhotoConverter.Preset, result: PhotoConverter.PhotoConversionResult): UserPhotoTemplate =
         withContext(Dispatchers.IO) {
             writeLock.withLock {
                 baseDir.mkdirs()
+                val loaded = loadLocked()
+                if (!loaded.safeToWrite) throw IOException("My Photos index is damaged and could not be set aside; not overwriting it")
+
                 val id = "photo_${UUID.randomUUID()}"
-                val referenceFileName = "${id}_reference.jpg"
-                val lineArtFileName = "${id}_lineart.png"
+                val referenceFileName = id + REFERENCE_SUFFIX
+                val lineArtFileName = id + LINEART_SUFFIX
+                val referenceFile = File(baseDir, referenceFileName)
+                val lineArtFile = File(baseDir, lineArtFileName)
 
-                File(baseDir, referenceFileName).outputStream().use { out ->
-                    result.reference.compress(Bitmap.CompressFormat.JPEG, 82, out)
-                }
-                File(baseDir, lineArtFileName).outputStream().use { out ->
-                    result.lineArt.compress(Bitmap.CompressFormat.PNG, 100, out)
-                }
+                try {
+                    // Bitmap.compress returns false (it does not throw) when the encode fails, e.g. a
+                    // full disk; DurableFile.write turns a thrown exception into "target untouched, tmp
+                    // removed", so the false has to become one.
+                    DurableFile.write(referenceFile) { out ->
+                        if (!result.reference.compress(Bitmap.CompressFormat.JPEG, 82, out)) throw IOException("Reference image encode failed")
+                    }
+                    DurableFile.write(lineArtFile) { out ->
+                        if (!result.lineArt.compress(Bitmap.CompressFormat.PNG, 100, out)) throw IOException("Line-art image encode failed")
+                    }
 
-                val entry = UserPhotoTemplate(
-                    id = id,
-                    name = name,
-                    createdAtMillis = System.currentTimeMillis(),
-                    preset = preset.name,
-                    isPaintByNumberEligible = result.isPaintByNumberEligible,
-                    regionCount = result.regionCount,
-                    referenceFileName = referenceFileName,
-                    lineArtFileName = lineArtFileName,
-                )
-                saveBlocking(loadBlocking() + entry)
-                entry
+                    val entry = UserPhotoTemplate(
+                        id = id,
+                        name = name,
+                        createdAtMillis = System.currentTimeMillis(),
+                        preset = preset.name,
+                        isPaintByNumberEligible = result.isPaintByNumberEligible,
+                        regionCount = result.regionCount,
+                        referenceFileName = referenceFileName,
+                        lineArtFileName = lineArtFileName,
+                    )
+                    store.writeList(UserPhotoTemplate.serializer(), loaded.items + entry)
+                    entry
+                } catch (t: Throwable) {
+                    runCatching { referenceFile.delete() }
+                    runCatching { lineArtFile.delete() }
+                    throw t
+                }
             }
         }
 
+    /**
+     * Removes [id] from the index and moves its files to the trash folder rather than deleting
+     * them, so [restore] can bring it back (the gallery's Undo). The files are only really gone
+     * after [purgeDeleted] or the next app start. A damaged, unmovable index means nothing is
+     * changed and the current list is returned.
+     */
     suspend fun delete(id: String): List<UserPhotoTemplate> = withContext(Dispatchers.IO) {
         writeLock.withLock {
-            val current = loadBlocking()
-            val target = current.find { it.id == id }
-            val remaining = current.filterNot { it.id == id }
-            saveBlocking(remaining)
+            val loaded = loadLocked()
+            if (!loaded.safeToWrite) return@withLock loaded.items
+            val target = loaded.items.find { it.id == id }
+            val remaining = loaded.items.filterNot { it.id == id }
+            store.writeList(UserPhotoTemplate.serializer(), remaining)
             if (target != null) {
                 val refFile = referenceFile(target)
                 val lineFile = lineArtFile(target)
                 FileBitmapCache.invalidate(refFile.absolutePath)
                 FileBitmapCache.invalidate(lineFile.absolutePath)
-                refFile.delete()
-                lineFile.delete()
+                trashDir.mkdirs()
+                moveInto(trashDir, refFile)
+                moveInto(trashDir, lineFile)
             }
             remaining
+        }
+    }
+
+    /** Undo of [delete]: moves [template]'s files back and re-adds its index record. */
+    suspend fun restore(template: UserPhotoTemplate): List<UserPhotoTemplate> = withContext(Dispatchers.IO) {
+        writeLock.withLock {
+            val loaded = loadLocked()
+            if (!loaded.safeToWrite) return@withLock loaded.items
+            moveInto(baseDir, File(trashDir, template.referenceFileName))
+            moveInto(baseDir, File(trashDir, template.lineArtFileName))
+            if (loaded.items.any { it.id == template.id }) return@withLock loaded.items
+            // Only re-add it if its files really made it back; an entry pointing at nothing would be worse than none.
+            if (!referenceFile(template).isFile || !lineArtFile(template).isFile) return@withLock loaded.items
+            val restored = loaded.items + template
+            store.writeList(UserPhotoTemplate.serializer(), restored)
+            restored
+        }
+    }
+
+    /** Permanently removes a [delete]d template's files once its Undo window has passed. */
+    suspend fun purgeDeleted(template: UserPhotoTemplate) {
+        withContext(Dispatchers.IO) {
+            writeLock.withLock {
+                File(trashDir, template.referenceFileName).delete()
+                File(trashDir, template.lineArtFileName).delete()
+            }
+        }
+    }
+
+    private fun moveInto(dir: File, file: File) {
+        if (!file.exists()) return
+        val dest = File(dir, file.name)
+        if (!file.renameTo(dest)) {
+            runCatching { file.copyTo(dest, overwrite = true); file.delete() }
+                .onFailure { DiagnosticLog.log(appContext, "UserPhotoTemplateRepository", "Could not move ${file.name} to ${dir.name} (${it.message})") }
         }
     }
 
@@ -160,5 +299,11 @@ class UserPhotoTemplateRepository(private val appContext: Context) {
                 canvas.drawBitmap(bitmap, null, RectF(left, top, left + drawW, top + drawH), paint)
             },
         )
+    }
+
+    private companion object {
+        const val TRASH_DIR = "trash"
+        const val LINEART_SUFFIX = "_lineart.png"
+        const val REFERENCE_SUFFIX = "_reference.jpg"
     }
 }

@@ -14,6 +14,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.focusable
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
@@ -23,6 +24,7 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -85,6 +87,8 @@ import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.compose.ui.window.Dialog
@@ -93,11 +97,16 @@ import com.vellum.studio.canvas.DrawingCanvasView
 import com.vellum.studio.canvas.ToolMode
 import com.vellum.studio.canvas.gl.CompositorRenderer
 import com.vellum.studio.canvas.gl.LayerCompositorGLView
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import com.vellum.studio.model.CustomBrushRepository
+import com.vellum.studio.model.EditorAutosaver
+import com.vellum.studio.model.LoadResult
 import com.vellum.studio.model.PaletteRepository
 import com.vellum.studio.model.ProjectMeta
 import com.vellum.studio.model.ProjectRepository
 import com.vellum.studio.model.RecentColors
+import com.vellum.studio.model.SaveReason
+import com.vellum.studio.model.SaveStatus
 import com.vellum.studio.model.SettingsRepository
 import com.vellum.studio.network.LiveCanvasBridge
 import com.vellum.studio.ui.colorpicker.ColorPickerPanel
@@ -105,6 +114,7 @@ import com.vellum.studio.util.Printing
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
 
 // One "[" / "]" press worth of brush-size change -- see handleKeyShortcut. Additive rather than
 // multiplicative, matching how a single keypress-driven nudge behaves in most drawing apps; picked
@@ -144,6 +154,12 @@ fun EditorScreen(
     var meta by remember { mutableStateOf<ProjectMeta?>(null) }
     var engine by remember { mutableStateOf<CanvasEngine?>(null) }
     var loading by remember { mutableStateOf(true) }
+    // Non-null when the open did not produce an engine (missing, damaged canvas size, out of memory,
+    // unreadable file, or refused because a newer build saved it); shown as an error card instead of
+    // the canvas. While it is set there is no engine and no autosaver, which is what guarantees a
+    // failed open can never write over the project on disk. (The gallery already blocks tapping a
+    // newer-schema card, so that case here is the defensive path for any other way in.)
+    var openFailure by remember { mutableStateOf<LoadResult.Failed?>(null) }
     var layersPanelOpen by remember { mutableStateOf(false) }
     var colorPickerOpen by remember { mutableStateOf(false) }
     var printPresetDialogOpen by remember { mutableStateOf(false) }
@@ -151,7 +167,11 @@ fun EditorScreen(
     // affordance (see the dashed-border overlay in the canvas Box below), toggled by the
     // DragAndDropTarget's onEntered/onExited/onDrop/onEnded callbacks.
     var canvasDragHighlightActive by remember { mutableStateOf(false) }
-    var strokesSinceSave by remember { mutableStateOf(0) }
+    // The autosave policy for the open project (see EditorAutosaver); created together with `engine`
+    // once the project has loaded, so it is non-null whenever the canvas is on screen.
+    var autosaver by remember { mutableStateOf<EditorAutosaver?>(null) }
+    // True from the moment Back is pressed with unsaved work until the save it awaits has landed.
+    var leaving by remember { mutableStateOf(false) }
     var undoRedoTick by remember { mutableStateOf(0) }
     val drawingViewRef = remember { mutableStateOf<DrawingCanvasView?>(null) }
     val snackbarHostState = remember { SnackbarHostState() }
@@ -164,11 +184,33 @@ fun EditorScreen(
     var strokeActive by remember { mutableStateOf(false) }
     val glViewRef = remember { mutableStateOf<LayerCompositorGLView?>(null) }
 
-    fun saveNow() {
-        val m = meta
-        val e = engine
-        if (m != null && e != null) {
-            scope.launch { meta = repository.saveProject(m, e) }
+    /**
+     * Back / top-bar arrow: save, WAIT for the save, then leave. The wait is what keeps the gallery
+     * honest -- it used to navigate ahead of the write and list the project with its old thumbnail
+     * and sort position. The capture happens synchronously inside flush() (before the launch below),
+     * and the write itself runs on the app-scoped SaveCoordinator, so nothing here can be cancelled
+     * away from the disk; the launch only sequences "save landed, then pop". Bounded by a timeout so
+     * a stalled disk can never trap the user on the editor: the save keeps going on the app scope and
+     * the gallery re-lists when it commits (ProjectRepository.libraryRevision). A failed save is
+     * reported by the app-level SaveFailureHost, which outlives this screen, not from here.
+     */
+    fun leaveEditor() {
+        if (leaving) return
+        val saver = autosaver
+        if (saver == null) {
+            onBack()
+            return
+        }
+        val pending = saver.flush(SaveReason.BACK)
+        if (pending.isCompleted) {
+            // Nothing dirty and nothing in flight: no reason to flash a scrim.
+            onBack()
+            return
+        }
+        leaving = true
+        scope.launch {
+            withTimeoutOrNull(BACK_SAVE_WAIT_MS) { pending.await() }
+            onBack()
         }
     }
 
@@ -205,6 +247,7 @@ fun EditorScreen(
     // and Ctrl+Z/Y all inherit it; the buttons are additionally disabled while strokeActive.
     fun doUndo() {
         val e = engine ?: return
+        // CanvasEngine.undo bumps the revision, which is what marks the project dirty for autosave.
         if (e.undo()) undoRedoTick++
     }
 
@@ -268,7 +311,8 @@ fun EditorScreen(
     LaunchedEffect(Unit) { keyboardFocusRequester.requestFocus() }
 
     LaunchedEffect(loading) {
-        if (!loading && !settingsRepository.keyboardShortcutsHintShown) {
+        // Not over an error card: there is no canvas for the shortcuts to act on, and showing it would burn the one-time hint.
+        if (!loading && openFailure == null && !settingsRepository.keyboardShortcutsHintShown) {
             // Set the moment we decide to show it (not after the Snackbar's dismissed) -- backing
             // out of the editor mid-Snackbar shouldn't leave it eligible to fire again next project.
             settingsRepository.keyboardShortcutsHintShown = true
@@ -283,13 +327,29 @@ fun EditorScreen(
 
     LaunchedEffect(projectId) {
         loading = true
-        val loaded = repository.loadProject(projectId)
+        openFailure = null
+        val loaded = when (val result = repository.loadProject(projectId)) {
+            is LoadResult.Ok -> result.project
+            is LoadResult.Failed -> {
+                openFailure = result
+                null
+            }
+        }
         if (loaded != null) {
-            meta = loaded.first
-            engine = loaded.second
-            LiveCanvasBridge.set(loaded.first, loaded.second)
+            meta = loaded.meta
+            autosaver = repository.openAutosaver(loaded.meta, loaded.engine)
+            engine = loaded.engine
+            LiveCanvasBridge.set(loaded.meta, loaded.engine)
         }
         loading = false
+        // After loading=false: showSnackbar suspends until dismissed and must not hold the canvas hostage.
+        if (loaded != null && loaded.quarantinedLayerNames.isNotEmpty()) {
+            snackbarHostState.showSnackbar(
+                "Couldn't read layer ${loaded.quarantinedLayerNames.joinToString(", ") { "\"$it\"" }}; it opens blank. " +
+                    "The damaged file was kept aside (.corrupt) rather than overwritten.",
+                duration = SnackbarDuration.Long,
+            )
+        }
     }
 
     // currentTool is included so switching into Paint by Number immediately shows the numbered
@@ -304,9 +364,19 @@ fun EditorScreen(
         onDispose { LiveCanvasBridge.set(null, null) }
     }
 
-    BackHandler {
-        saveNow()
-        onBack()
+    // Autosave wiring. The debounce timer lives in this composition (it should die with the screen);
+    // the lifecycle flush and the final flush on leaving do not depend on it, and the saves they
+    // request run on the app-scoped SaveCoordinator either way.
+    val lifecycleOwner = LocalLifecycleOwner.current
+    autosaver?.let { saver ->
+        LaunchedEffect(saver) { saver.run() }
+        DisposableEffect(saver, lifecycleOwner) {
+            lifecycleOwner.lifecycle.addObserver(saver.lifecycleObserver)
+            onDispose {
+                lifecycleOwner.lifecycle.removeObserver(saver.lifecycleObserver)
+                saver.close()
+            }
+        }
     }
     // Composed AFTER the exit handler on purpose: the OnBackPressedDispatcher gives priority to
     // the most recently added enabled callback, so while the Layers panel is open system Back
@@ -318,6 +388,8 @@ fun EditorScreen(
         layersPanelOpen = false
     }
 
+    BackHandler { leaveEditor() }
+
     Scaffold(
         modifier = Modifier
             .fillMaxSize()
@@ -328,9 +400,14 @@ fun EditorScreen(
         topBar = {
             val eng = engine
             TopAppBar(
-                title = { Text(meta?.name ?: "Loading…", maxLines = 1) },
+                title = {
+                    Column {
+                        Text(meta?.name ?: if (openFailure != null) "Couldn't open project" else "Loading…", maxLines = 1)
+                        autosaver?.let { SaveStatusLabel(it.status) }
+                    }
+                },
                 navigationIcon = {
-                    IconButton(onClick = { saveNow(); onBack() }) {
+                    IconButton(onClick = { leaveEditor() }) {
                         Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
                     }
                 },
@@ -475,6 +552,12 @@ fun EditorScreen(
     ) { padding ->
         Box(Modifier.fillMaxSize().padding(padding)) {
             when {
+                openFailure != null -> ProjectOpenErrorCard(
+                    failure = openFailure!!,
+                    onBack = { leaveEditor() },
+                    onExportLog = { exportDiagnosticLog(context) },
+                    modifier = Modifier.align(Alignment.Center),
+                )
                 loading || engine == null -> CircularProgressIndicator(Modifier.align(Alignment.Center))
                 else -> {
                     val eng = engine!!
@@ -583,13 +666,9 @@ fun EditorScreen(
                                         contentDescription = "Drawing canvas"
                                         attachEngine(eng)
                                         setOnDragListener(referenceImageDragListener)
-                                        onStrokeCommitted = {
-                                            strokesSinceSave++
-                                            if (strokesSinceSave >= 6) {
-                                                strokesSinceSave = 0
-                                                saveNow()
-                                            }
-                                        }
+                                        // The debounce on engine.revision is the real trigger; this
+                                        // every-6th-commit flush is the backstop under it.
+                                        onStrokeCommitted = { autosaver?.noteStrokeCommitted() }
                                         onStrokeActiveChanged = { active ->
                                             strokeActive = active
                                             glViewRef.value?.requestComposite()
@@ -695,6 +774,7 @@ fun EditorScreen(
                     }
                 }
             }
+            if (leaving) SavingScrim(Modifier.matchParentSize())
         }
     }
 
@@ -744,6 +824,46 @@ fun EditorScreen(
                 }
             },
         )
+    }
+}
+
+/** How long Back waits for the save before leaving anyway (the save carries on regardless). */
+private const val BACK_SAVE_WAIT_MS = 15_000L
+
+/** The small "Saved" indicator under the project name in the top bar. */
+@Composable
+private fun SaveStatusLabel(status: SaveStatus) {
+    val (text, color) = when (status) {
+        SaveStatus.SAVED -> "Saved" to MaterialTheme.colorScheme.onSurfaceVariant
+        SaveStatus.UNSAVED -> "Unsaved changes" to MaterialTheme.colorScheme.onSurfaceVariant
+        SaveStatus.SAVING -> "Saving…" to MaterialTheme.colorScheme.primary
+        SaveStatus.FAILED -> "Not saved" to MaterialTheme.colorScheme.error
+    }
+    Text(
+        text,
+        style = MaterialTheme.typography.labelSmall,
+        color = color,
+        maxLines = 1,
+        modifier = Modifier.semantics { contentDescription = "Save status: $text" },
+    )
+}
+
+/** Shown while Back waits for the save; swallows touches so nothing is edited mid-wait. */
+@Composable
+private fun SavingScrim(modifier: Modifier = Modifier) {
+    Box(
+        modifier
+            .background(Color.Black.copy(alpha = 0.35f))
+            .clickable(interactionSource = remember { MutableInteractionSource() }, indication = null) {},
+        contentAlignment = Alignment.Center,
+    ) {
+        Surface(shape = RoundedCornerShape(12.dp), color = MaterialTheme.colorScheme.surface, tonalElevation = 6.dp) {
+            Row(Modifier.padding(horizontal = 20.dp, vertical = 14.dp), verticalAlignment = Alignment.CenterVertically) {
+                CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp)
+                Spacer(Modifier.width(12.dp))
+                Text("Saving…", style = MaterialTheme.typography.bodyMedium)
+            }
+        }
     }
 }
 

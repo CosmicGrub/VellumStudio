@@ -1,5 +1,8 @@
 package com.vellum.studio.model
 
+import android.graphics.Bitmap
+import com.vellum.studio.canvas.Layer
+import com.vellum.studio.canvas.LayerBlendMode
 import com.vellum.studio.util.DeviceCapabilities
 import kotlinx.serialization.EncodeDefault
 import kotlinx.serialization.ExperimentalSerializationApi
@@ -21,6 +24,34 @@ data class LayerMeta(
     // See Layer.isReferenceImage's own doc for what this drives (the Pose Reference Overlay's
     // "Show Pose Guide" entry point in LayersPanel).
     val isReferenceImage: Boolean = false,
+)
+
+/**
+ * The ONE place a live [Layer] becomes its on-disk record (and [toLayer] the one place back).
+ * Every save path -- create, create-from-template, the durable save capture -- and the load path go
+ * through these, so a per-layer field added later cannot be persisted on one path and dropped on
+ * another, and the blend mode is only ever converted through [LayerBlendMode.wireName] here.
+ */
+fun Layer.toMeta(order: Int): LayerMeta =
+    LayerMeta(id, name, opacity, visible, blendMode.wireName, order, locked, isReferenceImage)
+
+/**
+ * Rebuilds a [Layer] around [bitmap] from this record. A blend mode string no mode has ever used
+ * falls back to Normal (the layer still opens) but is reported to [onUnknownBlendMode] so the
+ * caller can log it instead of the reset being silent.
+ */
+fun LayerMeta.toLayer(bitmap: Bitmap, onUnknownBlendMode: (String) -> Unit = {}): Layer = Layer(
+    id = id,
+    name = name,
+    bitmap = bitmap,
+    opacity = opacity,
+    visible = visible,
+    blendMode = LayerBlendMode.fromWireName(blendMode) ?: run {
+        onUnknownBlendMode(blendMode)
+        LayerBlendMode.NORMAL
+    },
+    locked = locked,
+    isReferenceImage = isReferenceImage,
 )
 
 /** On-disk project record. Layer pixel data lives alongside as `layers/<id>.png`, not inline here. */
@@ -63,7 +94,20 @@ data class ProjectMeta(
     // project instead of creating a duplicate one -- see ColoringBookScreen's tap handler).
     val sourceTemplateId: String? = null,
 ) {
+    /**
+     * False for a canvas size no engine can be built from: zero/negative (garbled metadata whose
+     * dimensions decoded to 0 -- `Bitmap.createBitmap(0, 0)` throws) or beyond [MAX_CANVAS_DIMENSION]
+     * (a corrupted number, not a real canvas). Deliberately NOT a device-memory check: a real project
+     * made at a size this device's heap can't hold is an out-of-memory open, reported as such, not a
+     * damaged one -- rejecting it here would lock the user out of valid artwork.
+     */
+    val hasValidCanvasSize: Boolean
+        get() = widthPx in 1..MAX_CANVAS_DIMENSION && heightPx in 1..MAX_CANVAS_DIMENSION
+
     companion object {
+        /** Well above the largest "Studio" preset (4096) and the usual GPU texture ceiling; only garbage exceeds it. */
+        const val MAX_CANVAS_DIMENSION = 16_384
+
         /**
          * Bump this by exactly 1 and append one matching [ProjectSchemaMigrator.Step] whenever this
          * on-disk shape changes -- that pair is the entire cost of a future format change, instead
@@ -73,13 +117,48 @@ data class ProjectMeta(
     }
 }
 
-/** Lightweight row for the gallery grid — no bitmaps loaded until a project is actually opened. */
+/**
+ * Lightweight row for the gallery grid — no bitmaps loaded until a project is actually opened.
+ *
+ * [newerSchemaVersion] is non-null for a project whose metadata.json was written by a NEWER build
+ * (its `schemaVersion` is above [ProjectMeta.CURRENT_SCHEMA_VERSION]): this build can list it but
+ * must not open, migrate or save it. [name]/[widthPx]/[heightPx]/[updatedAt] are then read
+ * best-effort from the raw file without decoding it, purely so the card can be recognizable.
+ */
 data class ProjectSummary(
     val id: String,
     val name: String,
     val widthPx: Int,
     val heightPx: Int,
     val updatedAt: Long,
+    val thumbnailFile: File?,
+    val newerSchemaVersion: Int? = null,
+    /**
+     * Non-null for a project whose metadata is present but cannot produce a canvas (see
+     * [UnreadableReason.INVALID_CANVAS_SIZE]). Listed and flagged instead of hidden, so the user
+     * can see it exists, open it to reach the diagnostic-log export, or delete it.
+     */
+    val damage: UnreadableReason? = null,
+) {
+    /** False for a project this build refuses to open (see [newerSchemaVersion]). */
+    val isOpenable: Boolean get() = newerSchemaVersion == null
+
+    /** True for a project flagged [damage]; still tappable so the editor's error card can explain and offer the log. */
+    val isDamaged: Boolean get() = damage != null
+}
+
+/**
+ * One deleted project waiting in the trash (see [ProjectRepository.deleteProject]). [trashId] is the
+ * trash folder's own name and the handle every trash operation takes; it is NOT [projectId], because
+ * the same project can be trashed, restored and trashed again. [name] is read best-effort from the
+ * trashed metadata.json (never through the recovery path) purely so the row is recognizable.
+ */
+data class TrashedProject(
+    val trashId: String,
+    val projectId: String,
+    val name: String,
+    /** Epoch millis of the delete, from the folder name: the clock the 30-day purge runs on. */
+    val deletedAt: Long,
     val thumbnailFile: File?,
 )
 
