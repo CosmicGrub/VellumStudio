@@ -4,8 +4,14 @@ import android.graphics.Canvas
 import com.vellum.studio.VellumApp
 import com.vellum.studio.art.ColoringTemplate
 import kotlinx.coroutines.runBlocking
+import java.io.File
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotEquals
+import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
+import org.junit.Assert.fail
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
@@ -92,5 +98,45 @@ class ProjectRepositoryTest {
 
         assertEquals(bundledTemplate.id, bundledMeta.sourceTemplateId)
         assertEquals(photoTemplate.id, photoMeta.sourceTemplateId)
+    }
+
+    // ---- id containment: no caller may escape projectsRoot (SyncServer path-traversal fix) ----
+
+    private fun externalFilesDir() = RuntimeEnvironment.getApplication().getExternalFilesDir(null)!!
+
+    @Test
+    fun `resolveProjectDir accepts a real project id and rejects traversal, junk and non-uuid names`() = runBlocking {
+        val (meta, engine) = repository.createProject("Contained", 32, 32)
+        engine.layers.forEach { it.bitmap.recycle() }
+
+        assertNotNull(repository.resolveProjectDir(meta.id))
+        // A syntactically valid UUID that names no directory.
+        assertNull(repository.resolveProjectDir("00000000-0000-0000-0000-000000000000"))
+        for (bad in listOf("..", ".", "", "../photo_templates/x", "%2e%2e", "${meta.id}\r\n", "${meta.id}/..", "${meta.id}\u0000", ".trash", " ${meta.id}")) {
+            assertNull("'$bad' must not resolve", repository.resolveProjectDir(bad))
+        }
+    }
+
+    @Test
+    fun `deleteProject with a traversal id throws instead of deleting outside the projects root`() = runBlocking {
+        val sibling = File(File(externalFilesDir(), "photo_templates").apply { mkdirs() }, "keep.jpg").apply { writeText("x") }
+        repository.listProjects() // ensures projects/ exists
+
+        for (bad in listOf("..", "../photo_templates", "")) {
+            try {
+                repository.deleteProject(bad)
+                fail("deleteProject('$bad') should have been refused")
+            } catch (expected: IllegalArgumentException) {
+                // dirFor's canonical-parent check
+            }
+        }
+        assertTrue("files outside projects/ must survive", sibling.exists())
+    }
+
+    @Test
+    fun `exportProjectZipTo writes nothing and returns false for a traversal id`() {
+        val out = java.io.ByteArrayOutputStream()
+        assertFalse(repository.exportProjectZipTo("..", out))
+        assertEquals(0, out.size())
     }
 }

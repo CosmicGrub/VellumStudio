@@ -55,7 +55,7 @@ fun ConnectScreen(repository: ProjectRepository, onBack: () -> Unit) {
             running = false
             return
         }
-        val fresh = SyncServer(repository)
+        val fresh = SyncServer(repository, context.applicationContext)
         val result = runCatching { fresh.start() }
         if (result.isSuccess) {
             server = fresh

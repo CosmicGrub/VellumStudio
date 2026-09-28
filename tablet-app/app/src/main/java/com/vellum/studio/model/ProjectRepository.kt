@@ -27,7 +27,9 @@ import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.longOrNull
 import java.io.File
 import java.io.FileOutputStream
+import java.io.OutputStream
 import java.util.UUID
+import java.util.zip.CRC32
 import java.util.zip.ZipEntry
 import java.util.zip.ZipOutputStream
 
@@ -56,7 +58,28 @@ class ProjectRepository(private val appContext: Context) {
     private val projectsRoot: File
         get() = File(appContext.getExternalFilesDir(null), "projects").apply { mkdirs() }
 
-    private fun dirFor(id: String) = File(projectsRoot, id)
+    /**
+     * The one choke point every id -> directory mapping goes through, so no caller (SyncServer today,
+     * whatever comes next) can reach outside [projectsRoot] with a crafted id. An id of `..` used to
+     * make `File(projectsRoot, id)` the parent -- the whole external files dir, which also holds
+     * photo_templates/, palettes.json, custom_brushes.json and academy_progress.json -- and
+     * [deleteProject] would have recursively deleted it. The check is on the CANONICAL path (resolves
+     * `..`, `.` and symlinks) rather than a string filter, and it deliberately does NOT require the
+     * UUID shape: [listProjects] feeds real directory names (including ones this app didn't mint,
+     * e.g. a `.trash` folder) through here, and a strict-shape check would make those throw. The
+     * UUID-shape gate for anything network-facing lives in [resolveProjectDir].
+     */
+    private fun dirFor(id: String): File {
+        val root = projectsRoot
+        val candidate = File(root, id)
+        val escapes = try {
+            candidate.canonicalFile.parentFile != root.canonicalFile
+        } catch (e: java.io.IOException) {
+            true // e.g. a NUL in the id -- canonicalization itself refuses it
+        }
+        require(!escapes) { "Project id does not name a direct child of the projects directory" }
+        return candidate
+    }
     private fun metaFile(id: String) = File(dirFor(id), "metadata.json")
     private fun layersDir(id: String) = File(dirFor(id), "layers").apply { mkdirs() }
     private fun thumbFile(id: String) = File(dirFor(id), "thumbnail.png")
@@ -388,19 +411,75 @@ class ProjectRepository(private val appContext: Context) {
         uri
     }
 
-    /** Zips the project folder (metadata + layer PNGs) for the LAN sync server / share sheet. */
-    suspend fun exportProjectZip(id: String): File = withContext(Dispatchers.IO) {
-        val src = dirFor(id)
-        val zipFile = File(appContext.cacheDir, "export_$id.zip")
-        ZipOutputStream(FileOutputStream(zipFile)).use { zos ->
+    /**
+     * Streams the project folder (metadata + layer PNGs) as a zip into [out], for the LAN sync
+     * server. Returns false (and writes nothing) if [id] isn't a real project.
+     *
+     * No temp file: the previous version built `cacheDir/export_<id>.zip` fully before the first
+     * response byte (which is what tripped the PC client's 10 s header timeout on big projects),
+     * never deleted it, and named it from the raw id. Writing straight to [out] means time-to-first-
+     * byte is immediate and nothing is left behind.
+     *
+     * PNG entries are STORED, not deflated -- they're already deflate-compressed, so deflating them
+     * again burns CPU for ~0% size win. STORED needs size + CRC before the entry header, hence the
+     * cheap read-only first pass. If autosave rewrites a layer between the two passes the entry CRC
+     * no longer matches and the zip stream throws, aborting the download rather than shipping a torn
+     * archive silently; taking the save-coordinator lock around this call is what will make that
+     * window disappear once that lands.
+     *
+     * Blocking: call from a worker thread, never the main thread.
+     */
+    fun exportProjectZipTo(id: String, out: OutputStream): Boolean {
+        val src = resolveProjectDir(id) ?: return false
+        ZipOutputStream(out).use { zos ->
             src.walkTopDown().filter { it.isFile }.forEach { f ->
-                zos.putNextEntry(ZipEntry(f.relativeTo(src).path))
+                // invariantSeparatorsPath: zip entry names must use '/', whatever the host File uses.
+                val entry = ZipEntry(f.relativeTo(src).invariantSeparatorsPath)
+                if (f.extension.equals("png", ignoreCase = true)) {
+                    val crc = CRC32()
+                    var size = 0L
+                    f.inputStream().use { input ->
+                        val buf = ByteArray(64 * 1024)
+                        while (true) {
+                            val n = input.read(buf)
+                            if (n < 0) break
+                            crc.update(buf, 0, n)
+                            size += n
+                        }
+                    }
+                    entry.method = ZipEntry.STORED
+                    entry.size = size
+                    entry.compressedSize = size
+                    entry.crc = crc.value
+                }
+                zos.putNextEntry(entry)
                 f.inputStream().use { it.copyTo(zos) }
                 zos.closeEntry()
             }
         }
-        zipFile
+        return true
     }
 
-    fun projectDir(id: String): File = dirFor(id)
+    /**
+     * Network-facing id -> project directory lookup: null unless [id] is a canonical UUID (the only
+     * shape [createProject]/[createFromTemplate] ever mint), resolves to a direct child of
+     * [projectsRoot] (belt and braces on top of the regex, via [dirFor]) and actually exists as a
+     * directory. Because non-UUID names never match, the `.trash` folder and every other non-project
+     * sibling are unreachable through here too.
+     */
+    fun resolveProjectDir(id: String): File? {
+        if (!PROJECT_ID_REGEX.matches(id)) return null
+        val dir = try {
+            dirFor(id)
+        } catch (e: IllegalArgumentException) {
+            return null
+        }
+        return dir.takeIf { it.isDirectory }
+    }
+
+    companion object {
+        // Kotlin's Regex.matches() is a FULL match, so a trailing CR/LF (which `$` would let through
+        // in some engines) fails here.
+        val PROJECT_ID_REGEX = Regex("[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}")
+    }
 }
