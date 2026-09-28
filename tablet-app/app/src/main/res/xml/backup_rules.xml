@@ -1,4 +1,8 @@
 <?xml version="1.0" encoding="utf-8"?>
 <full-backup-content>
     <exclude domain="file" path="projects/" />
+    <!-- The soft-delete trash (ProjectRepository.TRASH_DIR_NAME) lives in app-specific EXTERNAL storage
+         beside projects/, so it needs its own exclusion in that domain: deleted work must not be
+         restored to a new device as if it were live, nor kept in the cloud past the 30-day purge. -->
+    <exclude domain="external" path=".trash/" />
 </full-backup-content>

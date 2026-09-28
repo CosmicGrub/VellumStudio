@@ -2,8 +2,10 @@
 <data-extraction-rules>
     <cloud-backup>
         <exclude domain="file" path="projects/" />
+        <exclude domain="external" path=".trash/" />
     </cloud-backup>
     <device-transfer>
         <exclude domain="file" path="projects/" />
+        <exclude domain="external" path=".trash/" />
     </device-transfer>
 </data-extraction-rules>

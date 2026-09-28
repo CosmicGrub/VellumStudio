@@ -8,8 +8,10 @@ marked placeholders for what comes next.
 ## What this scaffold does today
 
 - Lets you type in the tablet's LAN address (`IP:port`, default port
-  `8642`) and press **Connect**.
-- On connect, it calls `GET /projects` on the tablet's sync server and
+  `8642`) and the **6-digit PIN** the tablet's Connect screen shows, then press **Connect**.
+  The PIN is new every time Wi-Fi sync is started on the tablet.
+- On connect, it calls `GET /projects` on the tablet's sync server (sending the PIN in an
+  `X-Vellum-Pin` header) and
   lists the returned projects (name + last-updated date) in a `ListView`.
 - Lets you select a project and press **Download Project…**, which calls
   `GET /projects/{id}/export.zip` and saves the resulting zip (flattened
@@ -20,7 +22,10 @@ marked placeholders for what comes next.
   (disabled button, "Coming soon" label) for a future real-time canvas
   mirror — see below.
 - Handles connection failures (unreachable host, timeout, bad JSON, etc.)
-  by showing a status message instead of crashing.
+  by showing a status message instead of crashing. A wrong PIN says so; after five wrong PINs the
+  tablet locks that sync session (`429`) and the companion tells you to tap Stop then Start on the
+  tablet for a new PIN. The PIN is checked to be exactly 6 digits before anything is sent, so a
+  typo doesn't use up one of the five attempts.
 
 ### Running it
 
@@ -49,23 +54,28 @@ pc-companion/
     Models/
       ProjectSummary.cs                    # {id, name, updatedAt, thumbnailUrl}
     Services/
-      TabletClient.cs                      # GetProjectsAsync / DownloadProjectZipAsync
+      TabletClient.cs                      # GetProjectsAsync / DownloadProjectZipAsync (PIN on every call)
 ```
 
 ## How it talks to the tablet app's sync server
 
-The Android side (a separate project, being built in parallel) runs a
-small HTTP server on the tablet, bound to its LAN IP, default port
-`8642`, exposing:
+The Android side runs a small HTTP server on the tablet, bound to its Wi-Fi/LAN address only
+(never every interface), default port `8642`, that stops itself after 10 minutes without use.
+Every request must carry the pairing PIN in an `X-Vellum-Pin` header; without it the answer is
+`401`, and five wrong PINs lock the session (`429`) until sync is stopped and started again on the
+tablet. Routes:
 
 - `GET /projects` → JSON array of
   `{ "id": string, "name": string, "updatedAt": ISO-8601 string, "thumbnailUrl": string }`
 - `GET /projects/{id}/export.zip` → a zip containing the flattened PNG,
   the individual layer PNGs, and a `metadata.json` describing the project.
 
+This is plain HTTP, **not encrypted**: the PIN keeps other people on the network from browsing
+your canvases, but anyone able to sniff the network can read the traffic, PIN included. Use it on
+a network you trust rather than public Wi-Fi.
+
 **Discovery today is manual.** You type the tablet's IP:port into the
-text box yourself (find it in the tablet app's settings, or via your
-router's client list). There is no NSD/mDNS/Bonjour discovery wired up
+text box yourself (it is shown on the tablet's Connect screen next to the PIN). There is no NSD/mDNS/Bonjour discovery wired up
 on the PC side yet — that's a nice-to-have, not a blocker, since both
 devices are assumed to be on the same LAN and the tablet's address
 rarely changes on a typical home network. A future iteration could add

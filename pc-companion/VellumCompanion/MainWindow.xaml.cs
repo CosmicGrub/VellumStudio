@@ -15,6 +15,7 @@ public partial class MainWindow : Window
     private readonly ObservableCollection<ProjectSummary> _projects = new();
 
     private string? _connectedBaseUrl;
+    private string? _connectedPin;
 
     public MainWindow()
     {
@@ -29,13 +30,17 @@ public partial class MainWindow : Window
         ConnectButton.IsEnabled = false;
         DownloadButton.IsEnabled = false;
         _projects.Clear();
+        _connectedBaseUrl = null;
+        _connectedPin = null;
 
         try
         {
             var baseUrl = TabletClient.BuildBaseUrl(TabletAddressTextBox.Text);
+            // Validated before any request: a mistyped PIN must not burn one of the tablet's five attempts.
+            var pin = TabletClient.NormalizePin(PinTextBox.Text);
             SetStatus($"Connecting to {baseUrl}...");
 
-            var projects = await _tabletClient.GetProjectsAsync(baseUrl);
+            var projects = await _tabletClient.GetProjectsAsync(baseUrl, pin);
 
             foreach (var project in projects)
             {
@@ -43,11 +48,16 @@ public partial class MainWindow : Window
             }
 
             _connectedBaseUrl = baseUrl;
+            _connectedPin = pin;
             SetStatus($"Connected to {baseUrl}. Found {_projects.Count} project(s).");
+        }
+        catch (TabletAuthException ex)
+        {
+            SetStatus(ex.Message);
         }
         catch (ArgumentException ex)
         {
-            SetStatus($"Invalid address: {ex.Message}");
+            SetStatus($"Invalid input: {ex.Message}");
         }
         catch (HttpRequestException ex)
         {
@@ -70,7 +80,7 @@ public partial class MainWindow : Window
 
     private async void DownloadButton_Click(object sender, RoutedEventArgs e)
     {
-        if (_connectedBaseUrl is null || ProjectsListView.SelectedItem is not ProjectSummary selected)
+        if (_connectedBaseUrl is null || _connectedPin is null || ProjectsListView.SelectedItem is not ProjectSummary selected)
         {
             SetStatus("Select a project first.");
             return;
@@ -96,10 +106,16 @@ public partial class MainWindow : Window
 
             await _tabletClient.DownloadProjectZipAsync(
                 _connectedBaseUrl,
+                _connectedPin,
                 selected.Id,
                 saveDialog.FileName);
 
             SetStatus($"Saved '{selected.Name}' to {saveDialog.FileName}");
+        }
+        catch (TabletAuthException ex)
+        {
+            // The tablet stopped/locked/restarted since Connect (a restart means a new PIN).
+            SetStatus(ex.Message);
         }
         catch (HttpRequestException ex)
         {
