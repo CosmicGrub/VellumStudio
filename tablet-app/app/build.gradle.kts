@@ -148,7 +148,12 @@ android {
             // or return a default) -- isReturnDefaultValues is deliberately left at its default
             // (false) so any accidental non-Robolectric call into a real android.* method in a
             // *plain* JVM test still fails loudly instead of silently returning 0/false/null.
-            isIncludeAndroidResources = false
+            // Flipped to true for the Compose UI tests (NavGuardsTest, GalleryCreateGuardTest):
+            // createComposeRule launches ui-test-manifest's ComponentActivity, and Robolectric can
+            // only resolve that activity (and the app theme it inherits) from the merged
+            // manifest/resources this switch puts on the unit-test classpath. The plain-JVM-fails-
+            // loudly rationale above is unaffected, since it is about isReturnDefaultValues.
+            isIncludeAndroidResources = true
         }
     }
 
@@ -277,6 +282,11 @@ dependencies {
     // stable, non-beta) specifically because it's the first stable line with a published
     // android-all-instrumented artifact for API 36 (this project's compileSdk/targetSdk).
     testImplementation("org.robolectric:robolectric:4.16.1")
+    // Compose UI tests under Robolectric (createComposeRule): the navigation double-tap guards in
+    // ui/navigation/NavGraph.kt and the Gallery Create guard are behavior of a live NavHost /
+    // dialog, which only a real composition can exercise. Version comes from the Compose BOM.
+    // ui-test-manifest (debugImplementation above) supplies the ComponentActivity it launches.
+    testImplementation("androidx.compose.ui:ui-test-junit4")
 
     // app/src/androidTest -- currently just PhotoConverterGoldenMasterInstrumentedTest, the one
     // half of the PhotoConverter golden-master fixture that needs a live OpenCV native call chain

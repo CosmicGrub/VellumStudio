@@ -82,6 +82,12 @@ fun GalleryScreen(
     var projects by remember { mutableStateOf<List<ProjectSummary>>(emptyList()) }
     var loading by remember { mutableStateOf(true) }
     var showNewCanvasDialog by remember { mutableStateOf(false) }
+    // True from the Create tap until the project exists and we have navigated. createProject
+    // allocates a full CanvasEngine and writes PNGs, so the dialog stays on screen for a
+    // noticeable moment; without this a second tap on Create ran a second createProject (an
+    // orphan "Untitled" project) and a second navigate. Same guard shape as
+    // ColoringBookScreen.startProject's `creating`.
+    var creating by remember { mutableStateOf(false) }
     var revision by remember { mutableStateOf(0) }
     val scope = rememberCoroutineScope()
 
@@ -136,7 +142,10 @@ fun GalleryScreen(
                 projects.isEmpty() -> EmptyState(Modifier.align(Alignment.Center))
                 else -> LazyVerticalGrid(
                     columns = GridCells.Adaptive(minSize = 220.dp),
-                    contentPadding = PaddingValues(16.dp),
+                    // Bottom inset clears the New Canvas FAB (56dp + 16dp margin): Scaffold only
+                    // insets this content for the top bar, not for the FAB, so with a bare 16dp the
+                    // last row's Options button sat underneath it and could not be tapped.
+                    contentPadding = PaddingValues(start = 16.dp, top = 16.dp, end = 16.dp, bottom = 96.dp),
                     horizontalArrangement = Arrangement.spacedBy(14.dp),
                     verticalArrangement = Arrangement.spacedBy(14.dp),
                 ) {
@@ -159,13 +168,25 @@ fun GalleryScreen(
 
     if (showNewCanvasDialog) {
         NewCanvasDialog(
-            onDismiss = { showNewCanvasDialog = false },
+            creating = creating,
+            // Cancel / tap-outside / system Back are inert while creating: dismissing the dialog
+            // mid-create would leave the project being made with nothing on screen to show it.
+            onDismiss = { if (!creating) showNewCanvasDialog = false },
             onCreate = { name, preset ->
-                scope.launch {
-                    val (meta, engine) = repository.createProject(name, preset.widthPx, preset.heightPx)
-                    engine.layers.forEach { it.bitmap.recycle() }
-                    showNewCanvasDialog = false
-                    onOpenProject(meta.id)
+                if (!creating) {
+                    creating = true
+                    scope.launch {
+                        try {
+                            val (meta, engine) = repository.createProject(name, preset.widthPx, preset.heightPx)
+                            engine.layers.forEach { it.bitmap.recycle() }
+                            showNewCanvasDialog = false
+                            onOpenProject(meta.id)
+                        } finally {
+                            // Also on failure, so a createProject that throws does not leave the
+                            // dialog permanently unusable.
+                            creating = false
+                        }
+                    }
                 }
             },
         )
@@ -251,7 +272,7 @@ private fun ThumbnailImage(file: File?, modifier: Modifier = Modifier) {
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun NewCanvasDialog(onDismiss: () -> Unit, onCreate: (String, CanvasSizePreset) -> Unit) {
+private fun NewCanvasDialog(creating: Boolean, onDismiss: () -> Unit, onCreate: (String, CanvasSizePreset) -> Unit) {
     var name by remember { mutableStateOf("Untitled") }
     // Device-capability-gated, not the flat full list -- a lower-memory device simply never sees
     // presets that would likely OOM it, rather than offering them and failing later.
@@ -279,10 +300,16 @@ private fun NewCanvasDialog(onDismiss: () -> Unit, onCreate: (String, CanvasSize
             }
         },
         confirmButton = {
-            TextButton(onClick = { onCreate(name.ifBlank { "Untitled" }, selected) }) { Text("Create") }
+            TextButton(onClick = { onCreate(name.ifBlank { "Untitled" }, selected) }, enabled = !creating) {
+                if (creating) {
+                    CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp)
+                } else {
+                    Text("Create")
+                }
+            }
         },
         dismissButton = {
-            TextButton(onClick = onDismiss) { Text("Cancel") }
+            TextButton(onClick = onDismiss, enabled = !creating) { Text("Cancel") }
         },
     )
 }
