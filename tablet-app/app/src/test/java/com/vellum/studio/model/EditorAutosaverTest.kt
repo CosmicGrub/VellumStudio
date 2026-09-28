@@ -263,6 +263,43 @@ class EditorAutosaverTest {
         }
     }
 
+    @Test
+    fun `undo and redo mark the project dirty and the undone pixels are what get persisted`() = runBlocking {
+        val repo = ProjectRepository(app, SaveHooks())
+        val ed = openEditor(repo)
+        val owner = TestOwner().apply { resume() }
+        owner.lifecycle.addObserver(ed.saver.lifecycleObserver)
+
+        // A committed stroke exactly the way DrawingCanvasView.endStroke records it for undo.
+        val layer = ed.engine.activeLayer()!!
+        val pending = ed.engine.undoManager.beginStroke(layer.id, layer.snapshot())
+        layer.bitmap.setPixel(4, 4, Color.RED)
+        layer.bumpVersion()
+        ed.engine.bumpRevision()
+        pending.commit(layer.snapshot())
+        ed.saver.flush(SaveReason.BACK).await()
+        assertFalse(ed.saver.isDirty)
+        assertEquals(Color.RED, ProjectRepository(app, SaveHooks()).loadProject(ed.meta.id)!!.second.layers[0].bitmap.getPixel(4, 4))
+
+        // Undo rewrites pixels but is not a stroke: before the engine owned the revision bump this
+        // was only marked dirty if the calling screen remembered to, and otherwise stayed unsaved.
+        assertTrue(ed.engine.undo())
+        assertTrue("undo must mark the project dirty", ed.saver.isDirty)
+        owner.goToBackground()
+        ed.saver.flush(SaveReason.BACK).await()
+        assertEquals(Color.TRANSPARENT, ProjectRepository(app, SaveHooks()).loadProject(ed.meta.id)!!.second.layers[0].bitmap.getPixel(4, 4))
+
+        assertTrue(ed.engine.redo())
+        assertTrue("redo must mark the project dirty", ed.saver.isDirty)
+        owner.goToBackground()
+        ed.saver.flush(SaveReason.BACK).await()
+        assertEquals(Color.RED, ProjectRepository(app, SaveHooks()).loadProject(ed.meta.id)!!.second.layers[0].bitmap.getPixel(4, 4))
+
+        // Nothing left to redo: a no-op that must not dirty the project (a free ON_STOP stays free).
+        assertFalse(ed.engine.redo())
+        assertFalse(ed.saver.isDirty)
+    }
+
     // ------------------------------------------------------------------ debounce
 
     @Test

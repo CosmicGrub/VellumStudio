@@ -237,18 +237,13 @@ fun EditorScreen(
     // exact same logic a keyboard shortcut does, instead of two copies of it drifting apart. ---
     fun doUndo() {
         val e = engine ?: return
-        if (!e.undoManager.canUndo) return
-        e.undoManager.undo { id -> e.layers.firstOrNull { it.id == id } }
-        e.bumpRevision()
-        undoRedoTick++
+        // CanvasEngine.undo bumps the revision, which is what marks the project dirty for autosave.
+        if (e.undo()) undoRedoTick++
     }
 
     fun doRedo() {
         val e = engine ?: return
-        if (!e.undoManager.canRedo) return
-        e.undoManager.redo { id -> e.layers.firstOrNull { it.id == id } }
-        e.bumpRevision()
-        undoRedoTick++
+        if (e.redo()) undoRedoTick++
     }
 
     fun adjustBrushSize(delta: Float) {

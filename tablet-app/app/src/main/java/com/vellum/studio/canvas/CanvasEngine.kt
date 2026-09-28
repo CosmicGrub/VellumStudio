@@ -242,6 +242,28 @@ class CanvasEngine(val widthPx: Int, val heightPx: Int) {
         revision++
     }
 
+    /**
+     * Undoes one step and bumps [revision]. The bump lives HERE, next to the pixel swap, rather than
+     * in whichever screen calls it: [revision] is what the editor's autosave watches (EditorAutosaver),
+     * and [UndoManager.undo] alone only changes the layer's contentVersion, so a caller that forgot the
+     * bump would leave an undo -- which rewrites pixels -- unsaved until some unrelated later edit.
+     * Returns false (and changes nothing) when there is nothing to undo.
+     */
+    fun undo(): Boolean {
+        if (!undoManager.canUndo) return false
+        undoManager.undo { id -> layers.firstOrNull { it.id == id } }
+        bumpRevision()
+        return true
+    }
+
+    /** Redo counterpart of [undo]; same reason the [revision] bump is owned by the engine. */
+    fun redo(): Boolean {
+        if (!undoManager.canRedo) return false
+        undoManager.redo { id -> layers.firstOrNull { it.id == id } }
+        bumpRevision()
+        return true
+    }
+
     // Layer property mutations funnel through here (rather than setting Layer fields directly from
     // the UI) so every visible change reliably bumps [revision] — the plain-View drawing surface
     // isn't part of Compose's snapshot system, so it relies on watching this counter to know when
