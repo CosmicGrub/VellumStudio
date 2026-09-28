@@ -24,16 +24,31 @@ import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
 import java.util.concurrent.LinkedBlockingQueue
 import java.util.concurrent.RejectedExecutionException
+import java.util.concurrent.ScheduledExecutorService
 import java.util.concurrent.ThreadFactory
 import java.util.concurrent.ThreadPoolExecutor
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicInteger
 
 /**
- * Minimal LAN sync bridge to the PC companion app — no pairing, no auth, same network only.
- * Deliberately the "driver-free" half of PC connectivity: see PC_CONNECTION.md at the repo root
- * for what this does and doesn't cover.
+ * Minimal LAN sync bridge to the PC companion app. Deliberately the "driver-free" half of PC
+ * connectivity: see PC_CONNECTION.md at the repo root for what this does and doesn't cover.
  *
+ * Plain HTTP, NOT encrypted: the PIN keeps other people on the same network from browsing the
+ * canvases, but anyone who can sniff the network can read the traffic (and the PIN with it). TLS is
+ * deliberately not part of this; the Connect screen says so rather than promising more.
+ *
+ * Every request must carry the session PIN (see [PairingGuard]) as an `X-Vellum-Pin` header, or a
+ * `?pin=` query parameter for a browser polling the mirror; without it the answer is 401, and after
+ * five wrong PINs it is 429 until the server is restarted. The check runs before routing, so a peer
+ * without the PIN cannot tell a real route from a made-up one.
+ *
+ * Reachable only on [bindAddress] (the Wi-Fi/LAN address), never the wildcard, and it stops itself
+ * after [idleTimeoutMs] with no authenticated request ([idleRemainingMs] drives the countdown on the
+ * Connect screen; [stoppedForIdle] says why it went away).
+ *
+ *   GET  /                               -> liveness text
  *   GET  /projects                       -> JSON list of project summaries
  *   GET  /projects/{id}/export.zip       -> zipped project (metadata.json + layer PNGs), streamed
  *                                            chunked; {id} must be a real project UUID, else 404
@@ -47,11 +62,44 @@ import java.util.concurrent.atomic.AtomicInteger
 class SyncServer(
     private val repository: ProjectRepository,
     private val appContext: Context,
+    // Required, with no wildcard default: NanoHTTPD(port) alone binds every interface, which is how
+    // this server used to be reachable over cellular/hotspot/VPN adapters as well as the Wi-Fi.
+    val bindAddress: String,
     port: Int = DEFAULT_PORT,
+    private val guard: PairingGuard = PairingGuard(),
+    private val idleTimeoutMs: Long = DEFAULT_IDLE_TIMEOUT_MS,
+    // Seam so a test can move time without sleeping; production is the monotonic clock.
+    private val clockMs: () -> Long = { System.nanoTime() / 1_000_000 },
     // Seam so a test can make the export fail mid-stream (a real failure needs a file vanishing
     // between the two passes over it); production always uses the repository.
     private val zipWriter: (String, OutputStream) -> Boolean = repository::exportProjectZipTo,
-) : NanoHTTPD(port) {
+) : NanoHTTPD(bindAddress, port) {
+
+    /** The PIN the companion must present; regenerated with every new server instance (every Start). */
+    val pin: String get() = guard.pin
+
+    /** True once five wrong PINs have been seen: everything then answers 429 until a fresh Start. */
+    val isLockedOut: Boolean get() = guard.isLocked
+
+    /** Address of the last peer that presented the right PIN, for the "connected" line on the Connect screen. */
+    @Volatile
+    var lastClient: String? = null
+        private set
+
+    /** Set when the idle timer (not the user) shut the server down, so the screen can explain it. */
+    @Volatile
+    var stoppedForIdle: Boolean = false
+        private set
+
+    @Volatile
+    private var lastActivityMs = clockMs()
+
+    private val stopped = AtomicBoolean(false)
+
+    // One daemon thread that only ever asks "has it been idle too long?". stop() uses shutdown(), not
+    // shutdownNow(): stop() can run on this very thread, and an interrupt landing on it would poison
+    // the DiagnosticLog file write that follows.
+    private val idleWatch: ScheduledExecutorService = Executors.newSingleThreadScheduledExecutor(daemonThreads("SyncServer-idle"))
 
     // Zip writers run here, off the connection thread, feeding a pipe that the response streams from
     // (see exportZipResponse). Sized to MAX_CONNECTIONS so a writer can never sit queued behind
@@ -65,17 +113,41 @@ class SyncServer(
 
     override fun start(timeout: Int, daemon: Boolean) {
         super.start(timeout, daemon)
-        DiagnosticLog.log(appContext, TAG, "Sync server started on port $listeningPort")
+        // The idle clock starts when the server does, not when the object was built.
+        touch()
+        val period = (idleTimeoutMs / 4).coerceIn(25L, 5_000L)
+        idleWatch.scheduleWithFixedDelay({ stopIfIdle() }, period, period, TimeUnit.MILLISECONDS)
+        DiagnosticLog.log(appContext, TAG, "Sync server started on $bindAddress:$listeningPort")
     }
 
     override fun stop() {
+        // Idempotent: the idle timer and the Connect screen's dispose can both call this.
+        if (!stopped.compareAndSet(false, true)) return
         super.stop()
         zipExecutor.shutdownNow()
+        idleWatch.shutdown()
         DiagnosticLog.log(appContext, TAG, "Sync server stopped")
+    }
+
+    /** Milliseconds until the idle timer stops the server; 0 once it is due. */
+    fun idleRemainingMs(): Long = (lastActivityMs + idleTimeoutMs - clockMs()).coerceAtLeast(0L)
+
+    private fun touch() {
+        lastActivityMs = clockMs()
+    }
+
+    private fun stopIfIdle() {
+        if (stopped.get() || idleRemainingMs() > 0) return
+        stoppedForIdle = true
+        DiagnosticLog.log(appContext, TAG, "Stopping sync server: idle for ${idleTimeoutMs / 1000}s")
+        stop()
     }
 
     override fun serve(session: IHTTPSession): Response {
         val peer = session.headers["remote-addr"] ?: "unknown"
+        // Auth is the first thing that happens, before the method check and routing: a peer without the
+        // PIN must not learn anything, not even which paths exist (404 vs 405 vs 401).
+        authorize(session, peer)?.let { return it }
         // GET/HEAD only: every route is a read, so refuse anything else up front instead of letting
         // a POST/PUT/DELETE fall through to a route that ignores the verb.
         if (session.method != Method.GET && session.method != Method.HEAD) {
@@ -98,6 +170,36 @@ class SyncServer(
             newFixedLengthResponse(Response.Status.INTERNAL_ERROR, MIME_PLAINTEXT, "Internal error")
         }
     }
+
+    /** Null when the request carries the right PIN (and counts as activity); otherwise the refusal to send. */
+    private fun authorize(session: IHTTPSession, peer: String): Response? {
+        val presented = session.headers["x-vellum-pin"] ?: session.parameters["pin"]?.firstOrNull()
+        return when (guard.check(presented)) {
+            PairingGuard.Verdict.OK -> {
+                // Only a request that authenticated counts as use: unauthenticated traffic must not be
+                // able to keep the server (and its exposure) alive past the idle timeout.
+                touch()
+                lastClient = peer
+                null
+            }
+            PairingGuard.Verdict.MISSING -> unauthorized("PIN required")
+            PairingGuard.Verdict.WRONG -> {
+                // The presented value is never logged (a near-miss PIN is still most of a PIN). Logging
+                // is bounded to the handful of failures before the lockout so a peer can't fill the log.
+                val locked = if (guard.isLocked) "; locked out until sync is restarted" else ""
+                DiagnosticLog.log(appContext, TAG, "Wrong PIN from $peer (${guard.failureCount}/${PairingGuard.MAX_FAILURES})$locked")
+                unauthorized("Wrong PIN")
+            }
+            PairingGuard.Verdict.LOCKED -> newFixedLengthResponse(
+                Response.Status.TOO_MANY_REQUESTS,
+                MIME_PLAINTEXT,
+                "Too many wrong PINs. Stop and start Wi-Fi sync on the tablet for a new PIN.",
+            )
+        }
+    }
+
+    private fun unauthorized(message: String) = newFixedLengthResponse(Response.Status.UNAUTHORIZED, MIME_PLAINTEXT, message)
+        .apply { addHeader("WWW-Authenticate", "VellumPin") }
 
     private fun notFound() = newFixedLengthResponse(Response.Status.NOT_FOUND, MIME_PLAINTEXT, "Not found")
 
@@ -175,7 +277,7 @@ class SyncServer(
     }
 
     private fun startZipPipe(id: String): InputStream {
-        val pipe = ZipPipe()
+        val pipe = ZipPipe(onRead = ::touch)
         zipExecutor.execute {
             try {
                 // The writer gets a sink whose close() is a no-op: ZipOutputStream.use{} in the
@@ -244,16 +346,18 @@ class SyncServer(
         override fun close() = delegate.flush()
     }
 
-    private class ZipPipe : InputStream() {
+    private class ZipPipe(private val onRead: () -> Unit) : InputStream() {
         private val source = PipedInputStream(PIPE_BYTES)
         val sink = PipedOutputStream(source)
 
         @Volatile
         var failure: Throwable? = null
 
-        override fun read(): Int = source.read().also { if (it < 0) checkFailure() }
+        // Each read is the PC actually pulling bytes, so a download that outlasts the idle timeout keeps
+        // the session alive instead of being cut off mid-file.
+        override fun read(): Int = source.read().also { onRead(); if (it < 0) checkFailure() }
 
-        override fun read(b: ByteArray, off: Int, len: Int): Int = source.read(b, off, len).also { if (it < 0) checkFailure() }
+        override fun read(b: ByteArray, off: Int, len: Int): Int = source.read(b, off, len).also { onRead(); if (it < 0) checkFailure() }
 
         override fun available(): Int = source.available()
 
@@ -308,6 +412,9 @@ class SyncServer(
 
     companion object {
         const val DEFAULT_PORT = 8642
+
+        /** Ten minutes: long enough to browse and pull a few canvases, short enough not to be left open all day. */
+        const val DEFAULT_IDLE_TIMEOUT_MS = 10 * 60 * 1000L
         private const val TAG = "SyncServer"
         private const val MAX_CONNECTIONS = 8
         private const val CONNECTION_QUEUE = 16

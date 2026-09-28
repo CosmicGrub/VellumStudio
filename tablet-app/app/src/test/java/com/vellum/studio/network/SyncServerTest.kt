@@ -7,7 +7,10 @@ import kotlinx.coroutines.runBlocking
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
+import org.junit.Assert.fail
+import org.junit.Assume.assumeTrue
 import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -20,6 +23,7 @@ import java.io.File
 import java.net.HttpURLConnection
 import java.net.Socket
 import java.net.URL
+import java.util.concurrent.atomic.AtomicLong
 import java.util.zip.ZipEntry
 import java.util.zip.ZipInputStream
 
@@ -50,10 +54,25 @@ class SyncServerTest {
     private lateinit var server: SyncServer
     private val port get() = server.listeningPort
 
+    /**
+     * Every server under test binds loopback only (the same "explicit address, never the wildcard"
+     * contract production has) and uses a fixed PIN so requests can carry it.
+     */
+    private fun newServer(
+        repo: ProjectRepository = repository,
+        guard: PairingGuard = PairingGuard(TEST_PIN),
+        idleTimeoutMs: Long = SyncServer.DEFAULT_IDLE_TIMEOUT_MS,
+        clockMs: () -> Long = { System.nanoTime() / 1_000_000 },
+        zipWriter: ((String, java.io.OutputStream) -> Boolean)? = null,
+    ): SyncServer {
+        // Port 0: the OS picks a free ephemeral port so the test never collides with a real server.
+        val writer = zipWriter ?: repo::exportProjectZipTo
+        return SyncServer(repo, app, LOOPBACK, port = 0, guard = guard, idleTimeoutMs = idleTimeoutMs, clockMs = clockMs, zipWriter = writer)
+    }
+
     @Before
     fun startServer() {
-        // Port 0: the OS picks a free ephemeral port so the test never collides with a real server.
-        server = SyncServer(repository, app, port = 0)
+        server = newServer()
         server.start()
     }
 
@@ -64,12 +83,16 @@ class SyncServerTest {
 
     private class RawResponse(val status: Int, val headers: String, val body: String)
 
-    /** Sends [requestLine] verbatim (no client-side normalization) and reads the response to EOF. */
-    private fun raw(requestLine: String): RawResponse {
-        Socket("127.0.0.1", port).use { socket ->
+    /**
+     * Sends [requestLine] verbatim (no client-side normalization) and reads the response to EOF. Carries
+     * [pin] as X-Vellum-Pin unless it is null (the unauthenticated case the auth tests need).
+     */
+    private fun raw(requestLine: String, pin: String? = TEST_PIN, target: SyncServer = server): RawResponse {
+        Socket(LOOPBACK, target.listeningPort).use { socket ->
             socket.soTimeout = 10_000
+            val pinHeader = if (pin != null) "X-Vellum-Pin: $pin\r\n" else ""
             socket.getOutputStream().apply {
-                write("$requestLine\r\nHost: localhost\r\nConnection: close\r\n\r\n".toByteArray(Charsets.ISO_8859_1))
+                write("$requestLine\r\nHost: localhost\r\n${pinHeader}Connection: close\r\n\r\n".toByteArray(Charsets.ISO_8859_1))
                 flush()
             }
             val bytes = ByteArrayOutputStream().also { socket.getInputStream().copyTo(it) }.toByteArray()
@@ -79,7 +102,10 @@ class SyncServerTest {
         }
     }
 
-    private fun get(path: String) = raw("GET $path HTTP/1.1")
+    private fun get(path: String, pin: String? = TEST_PIN) = raw("GET $path HTTP/1.1", pin)
+
+    private fun authedConnection(url: String): HttpURLConnection =
+        (URL(url).openConnection() as HttpURLConnection).apply { setRequestProperty("X-Vellum-Pin", TEST_PIN) }
 
     /** A file the traversal would have exposed: it lives in the projects root's PARENT. */
     private fun plantSensitiveSibling(): File {
@@ -177,7 +203,7 @@ class SyncServerTest {
      */
     private fun <T> withFailingExport(writer: (String, java.io.OutputStream) -> Boolean, block: (String, Int) -> T): T {
         val id = createProjectId()
-        val failing = SyncServer(repository, app, port = 0, zipWriter = writer)
+        val failing = newServer(zipWriter = writer)
         failing.start()
         try {
             return block(id, failing.listeningPort)
@@ -187,7 +213,7 @@ class SyncServerTest {
     }
 
     private fun assertDownloadErrors(id: String, port: Int) {
-        val conn = URL("http://127.0.0.1:$port/projects/$id/export.zip").openConnection() as HttpURLConnection
+        val conn = authedConnection("http://127.0.0.1:$port/projects/$id/export.zip")
         conn.readTimeout = 10_000
         assertEquals("headers are already committed as 200 before the zip fails", 200, conn.responseCode)
         try {
@@ -231,7 +257,7 @@ class SyncServerTest {
         }) { id, port ->
             Socket("127.0.0.1", port).use { s ->
                 s.soTimeout = 10_000
-                s.getOutputStream().write("GET /projects/$id/export.zip HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n".toByteArray())
+                s.getOutputStream().write("GET /projects/$id/export.zip HTTP/1.1\r\nHost: x\r\nX-Vellum-Pin: $TEST_PIN\r\nConnection: close\r\n\r\n".toByteArray())
                 val text = String(s.getInputStream().readBytes(), Charsets.ISO_8859_1)
                 assertFalse(text.contains("/secret/absolute/path"))
             }
@@ -245,12 +271,12 @@ class SyncServerTest {
         val brokenContext = object : android.content.ContextWrapper(app) {
             override fun getExternalFilesDir(type: String?): File = throw IllegalStateException("disk fault at /secret/absolute/path")
         }
-        val exploding = SyncServer(ProjectRepository(brokenContext), app, port = 0)
+        val exploding = newServer(ProjectRepository(brokenContext))
         exploding.start()
         try {
             Socket("127.0.0.1", exploding.listeningPort).use { s ->
                 s.soTimeout = 10_000
-                s.getOutputStream().write("GET /projects HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n".toByteArray())
+                s.getOutputStream().write("GET /projects HTTP/1.1\r\nHost: x\r\nX-Vellum-Pin: $TEST_PIN\r\nConnection: close\r\n\r\n".toByteArray())
                 val text = String(s.getInputStream().readBytes(), Charsets.ISO_8859_1)
                 assertTrue(text.startsWith("HTTP/1.1 500"))
                 assertTrue(text.endsWith("Internal error"))
@@ -265,15 +291,15 @@ class SyncServerTest {
     fun `happy path - project list, thumbnail and streamed export zip still work`() {
         val id = createProjectId()
 
-        val list = URL("http://127.0.0.1:$port/projects").openConnection() as HttpURLConnection
+        val list = authedConnection("http://127.0.0.1:$port/projects")
         assertEquals(200, list.responseCode)
         assertTrue(list.inputStream.readBytes().toString(Charsets.UTF_8).contains(id))
 
-        val thumb = URL("http://127.0.0.1:$port/projects/$id/thumbnail.png").openConnection() as HttpURLConnection
+        val thumb = authedConnection("http://127.0.0.1:$port/projects/$id/thumbnail.png")
         assertEquals(200, thumb.responseCode)
         assertTrue(thumb.inputStream.readBytes().isNotEmpty())
 
-        val zipConn = URL("http://127.0.0.1:$port/projects/$id/export.zip").openConnection() as HttpURLConnection
+        val zipConn = authedConnection("http://127.0.0.1:$port/projects/$id/export.zip")
         assertEquals(200, zipConn.responseCode)
         assertEquals("application/zip", zipConn.contentType)
         val entries = mutableMapOf<String, ZipEntry>()
@@ -317,8 +343,174 @@ class SyncServerTest {
         assertTrue("no export_*.zip may be left in cacheDir: ${leftovers.toList()}", leftovers.isEmpty())
 
         // And the same through the server: a full download must not create one either.
-        val conn = URL("http://127.0.0.1:$port/projects/$id/export.zip").openConnection() as HttpURLConnection
+        val conn = authedConnection("http://127.0.0.1:$port/projects/$id/export.zip")
         conn.inputStream.readBytes()
         assertTrue(app.cacheDir.listFiles { f -> f.name.startsWith("export_") }.orEmpty().isEmpty())
+    }
+
+    // ---- pairing PIN, lockout, bind address, idle stop -------------------------------------------
+
+    @Test
+    fun `every route refuses a request without the PIN with 401 and leaks nothing`() {
+        val id = createProjectId()
+        val routes = listOf(
+            "/", "/projects", "/mirror/frame.jpg", "/no/such/route",
+            "/projects/$id/export.zip", "/projects/$id/thumbnail.png",
+            // Bad ids must look identical to good ones without the PIN: no 404-vs-401 oracle.
+            "/projects/../export.zip", "/projects/00000000-0000-0000-0000-000000000000/export.zip",
+        )
+        for (path in routes) {
+            val r = get(path, pin = null)
+            assertEquals("$path without a PIN", 401, r.status)
+            assertTrue("$path must ask for the PIN", r.headers.contains("WWW-Authenticate: VellumPin", ignoreCase = true))
+            assertFalse("$path must not echo the project id", r.body.contains(id))
+            assertFalse("$path must not return zip/PNG bytes", r.body.startsWith("PK") || r.body.startsWith("\u0089PNG"))
+        }
+        // Auth runs ahead of the method check too: an unauthenticated POST must not learn "405".
+        assertEquals(401, raw("POST /projects HTTP/1.1", pin = null).status)
+        assertEquals(401, raw("HEAD /projects/$id/export.zip HTTP/1.1", pin = null).status)
+    }
+
+    @Test
+    fun `wrong PIN is refused 401 and the right PIN works by header or query parameter`() {
+        val id = createProjectId()
+        val wrong = get("/projects", pin = "000000")
+        assertEquals(401, wrong.status)
+        assertFalse("the real PIN must never be echoed back", wrong.body.contains(TEST_PIN) || wrong.headers.contains(TEST_PIN))
+
+        assertNull(server.lastClient)
+        val ok = get("/projects")
+        assertEquals(200, ok.status)
+        assertTrue(ok.body.contains(id))
+        assertEquals("the address of the authenticated peer is recorded", "127.0.0.1", server.lastClient)
+
+        // The mirror is meant to be pollable from a browser, which cannot set a custom header.
+        assertEquals(200, get("/projects?pin=$TEST_PIN", pin = null).status)
+        assertEquals(401, get("/projects?pin=000000", pin = null).status)
+    }
+
+    @Test
+    fun `five wrong PINs lock the server and even the correct PIN is then refused with 429`() {
+        val wrongPins = listOf("000000", "111111", "222222", "333333", "444444")
+        for (w in wrongPins) assertEquals("guess $w", 401, get("/projects", pin = w).status)
+        assertTrue(server.isLockedOut)
+
+        assertEquals("correct PIN after lockout", 429, get("/projects").status)
+        assertEquals("another guess after lockout", 429, get("/projects", pin = "555555").status)
+        assertEquals("no PIN after lockout", 429, get("/", pin = null).status)
+    }
+
+    @Test
+    fun `four wrong PINs do not lock and requests without a PIN never count as failures`() {
+        repeat(20) { assertEquals(401, get("/projects", pin = null).status) }
+        repeat(4) { assertEquals(401, get("/projects", pin = "00000$it").status) }
+        assertFalse(server.isLockedOut)
+        assertEquals(200, get("/projects").status)
+    }
+
+    @Test
+    fun `concurrent wrong guesses cannot exceed the failure budget`() {
+        // 16 simultaneous wrong guesses (within the 8 running + 16 queued connection budget). With a
+        // check-then-increment race, more than five of them would see "not locked yet" and get a 401.
+        val statuses = java.util.Collections.synchronizedList(mutableListOf<Int>())
+        val go = java.util.concurrent.CountDownLatch(1)
+        val threads = (0 until 16).map { i ->
+            Thread {
+                go.await()
+                statuses += get("/projects", pin = "9000%02d".format(i)).status
+            }.apply { start() }
+        }
+        go.countDown()
+        threads.forEach { it.join(30_000) }
+        assertEquals(16, statuses.size)
+        assertEquals("exactly five guesses are ever evaluated", 5, statuses.count { it == 401 })
+        assertEquals(11, statuses.count { it == 429 })
+    }
+
+    @Test
+    fun `server bound to one address is not reachable through another local address`() {
+        val alias = "127.0.0.2" // still loopback, but a different address than LOOPBACK
+        fun canConnect(port: Int) = try {
+            Socket().use { it.connect(java.net.InetSocketAddress(alias, port), 3_000) }
+            true
+        } catch (e: java.io.IOException) {
+            false
+        }
+
+        // Control: the same server class bound to the wildcard IS reachable through the alias. If the
+        // platform has no 127.0.0.2 the test can't say anything, so skip rather than pass vacuously.
+        val wildcard = newWildcardServer().apply { start() }
+        val aliasWorks = try { canConnect(wildcard.listeningPort) } finally { wildcard.stop() }
+        assumeTrue("127.0.0.2 is not connectable on this platform", aliasWorks)
+
+        assertFalse("a server bound to $LOOPBACK must refuse connections to $alias", canConnect(port))
+    }
+
+    private fun newWildcardServer() = SyncServer(repository, app, "0.0.0.0", port = 0, guard = PairingGuard(TEST_PIN))
+
+    @Test
+    fun `only authenticated requests reset the idle deadline`() {
+        val now = AtomicLong(0)
+        val s = newServer(idleTimeoutMs = 100_000, clockMs = { now.get() }).apply { start() }
+        try {
+            now.set(40_000)
+            assertEquals(60_000, s.idleRemainingMs())
+            assertEquals(401, raw("GET /projects HTTP/1.1", pin = null, target = s).status)
+            assertEquals(401, raw("GET /projects HTTP/1.1", pin = "000000", target = s).status)
+            assertEquals("unauthenticated traffic must not keep the server alive", 60_000, s.idleRemainingMs())
+            assertEquals(200, raw("GET /projects HTTP/1.1", target = s).status)
+            assertEquals("an authenticated request restarts the countdown", 100_000, s.idleRemainingMs())
+        } finally {
+            s.stop()
+        }
+    }
+
+    @Test
+    fun `server stops itself after the idle timeout and records that it was the timer`() {
+        val now = AtomicLong(0)
+        val s = newServer(idleTimeoutMs = 1_000, clockMs = { now.get() }).apply { start() }
+        try {
+            assertTrue(s.isAlive)
+            assertFalse(s.stoppedForIdle)
+            now.set(1_001)
+            waitUntil { !s.isAlive }
+            assertFalse("the idle timer must actually stop the listener", s.isAlive)
+            assertTrue(s.stoppedForIdle)
+            try {
+                Socket().use { it.connect(java.net.InetSocketAddress(LOOPBACK, s.listeningPort), 3_000) }
+                fail("a stopped server must refuse connections")
+            } catch (expected: java.io.IOException) {
+                // refused, as it should be
+            }
+        } finally {
+            s.stop() // idempotent: the timer already stopped it
+        }
+    }
+
+    @Test
+    fun `authenticated use keeps the server up past the original deadline`() {
+        val now = AtomicLong(0)
+        val s = newServer(idleTimeoutMs = 1_000, clockMs = { now.get() }).apply { start() }
+        try {
+            now.set(900)
+            assertEquals(200, raw("GET /projects HTTP/1.1", target = s).status) // deadline is now 1_900
+            now.set(1_800)
+            Thread.sleep(800) // several idle-timer ticks (250 ms period) against a not-yet-due deadline
+            assertTrue("used 900 ms ago, must still be up", s.isAlive)
+            assertFalse(s.stoppedForIdle)
+        } finally {
+            s.stop()
+        }
+        assertFalse("a user-initiated stop is not an idle stop", s.stoppedForIdle)
+    }
+
+    private fun waitUntil(timeoutMs: Long = 10_000, condition: () -> Boolean) {
+        val deadline = System.nanoTime() + timeoutMs * 1_000_000
+        while (!condition() && System.nanoTime() < deadline) Thread.sleep(25)
+    }
+
+    companion object {
+        const val TEST_PIN = "123456"
+        const val LOOPBACK = "127.0.0.1"
     }
 }
