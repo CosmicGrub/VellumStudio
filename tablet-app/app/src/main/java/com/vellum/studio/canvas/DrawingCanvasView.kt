@@ -724,10 +724,22 @@ class DrawingCanvasView @JvmOverloads constructor(
 
     // ---------------------------------------------------------------- stylus stroke
 
-    /** Reads Settings' current pressure-curve gamma -- one SharedPreferences-backed read, cheap
-     * enough to call once per gesture start/move but deliberately not called once PER SAMPLE (see
-     * [moveStroke], which caches this once per ACTION_MOVE rather than once per historical point). */
-    private fun currentPressureGamma(): Float = VellumApp.instance.settingsRepository.pressureCurveGamma
+    /**
+     * Where the pressure-curve gamma comes from. The default is exactly what this view always did --
+     * Settings' live value, so a change in Settings applies to the very next stroke -- and nothing in
+     * production sets it. It exists as a test seam: an input-routing test can inject a constant
+     * instead of depending on whatever SharedPreferences the Robolectric app happens to hold, and
+     * can count how often the view asks (see the call-count test in DrawingCanvasViewInputRoutingTest).
+     * It sits at the view's input edge, upstream of [StrokeRenderer], so the frozen dab loop is not
+     * involved at all.
+     */
+    var pressureGammaProvider: () -> Float = { VellumApp.instance.settingsRepository.pressureCurveGamma }
+
+    /** Reads the current pressure-curve gamma via [pressureGammaProvider] -- by default one
+     * SharedPreferences-backed read, cheap enough to call once per gesture start/move but
+     * deliberately not called once PER SAMPLE (see [moveStroke], which caches this once per
+     * ACTION_MOVE rather than once per historical point). */
+    private fun currentPressureGamma(): Float = pressureGammaProvider()
 
     /** [pressureGamma] is [PressureCurvePreset.LINEAR]'s gamma (1f, a no-op) by default, and every
      * call site below always passes the caller's own already-read gamma instead of re-reading
