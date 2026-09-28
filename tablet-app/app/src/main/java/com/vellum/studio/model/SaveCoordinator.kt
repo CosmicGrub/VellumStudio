@@ -67,6 +67,10 @@ internal open class SaveHooks {
     /** Decodes one layer PNG as a mutable ARGB_8888 bitmap; null if the file isn't a decodable image. May throw [OutOfMemoryError]. */
     open fun decodeLayer(layerId: String, file: File): Bitmap? =
         BitmapFactory.decodeFile(file.path, BitmapFactory.Options().apply { inMutable = true; inPreferredConfig = Bitmap.Config.ARGB_8888 })
+
+    /** Wall clock for [ProjectRepository.moveIntoTrash]'s uniqueness stamp. A seam so a test can pin
+     * two calls to the exact same millisecond -- the real-world case a fast CI runner hits by chance. */
+    open fun nowMs(): Long = System.currentTimeMillis()
 }
 
 /**
