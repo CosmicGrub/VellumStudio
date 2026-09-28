@@ -15,6 +15,7 @@ import java.io.File
 import java.io.FileInputStream
 import java.io.IOException
 import java.io.InputStream
+import java.io.OutputStream
 import java.io.PipedInputStream
 import java.io.PipedOutputStream
 import java.time.Instant
@@ -47,6 +48,9 @@ class SyncServer(
     private val repository: ProjectRepository,
     private val appContext: Context,
     port: Int = DEFAULT_PORT,
+    // Seam so a test can make the export fail mid-stream (a real failure needs a file vanishing
+    // between the two passes over it); production always uses the repository.
+    private val zipWriter: (String, OutputStream) -> Boolean = repository::exportProjectZipTo,
 ) : NanoHTTPD(port) {
 
     // Zip writers run here, off the connection thread, feeding a pipe that the response streams from
@@ -151,33 +155,51 @@ class SyncServer(
      * Streams the zip through a pipe instead of building a temp file first: a worker writes the zip
      * into the pipe while the chunked response reads it out, so headers go out immediately (the PC
      * client's 10 s timeout is on headers) and nothing is left in cacheDir. Chunked rather than
-     * fixed-length because the size isn't known up front. HEAD gets the headers only -- no zip work.
+     * fixed-length because the size isn't known up front.
+     *
+     * HEAD gets a fixed-length empty response, not the chunked one: NanoHTTPD 2.3.1 only emits
+     * `Transfer-Encoding: chunked` for non-HEAD requests, and for HEAD a chunked response (length -1)
+     * falls through to printing the raw `Content-Length: -1`, which a strict client (.NET
+     * HttpClient, i.e. the PC companion) rejects as malformed. The real length is unknowable without
+     * building the zip, so `Content-Length: 0` -- valid, and no zip work -- is the honest answer.
      */
     private fun exportZipResponse(id: String, headOnly: Boolean): Response {
-        val body: InputStream = if (headOnly) {
-            ByteArrayInputStream(ByteArray(0))
+        val response = if (headOnly) {
+            newFixedLengthResponse(Response.Status.OK, "application/zip", "")
         } else {
-            val pipe = ZipPipe()
-            zipExecutor.execute {
-                try {
-                    // Only false if the project vanished between resolveProjectDir and here.
-                    if (!repository.exportProjectZipTo(id, pipe.sink)) pipe.failure = IOException("Project disappeared")
-                } catch (t: Throwable) {
-                    // Headers are already on the wire; flag the pipe so the reader errors out and
-                    // NanoHTTPD drops the connection without a clean chunk terminator, instead of the
-                    // client receiving a truncated zip that looks complete.
-                    pipe.failure = t
-                    DiagnosticLog.log(appContext, TAG, "Zip export of $id failed: ${t::class.java.simpleName}: ${t.message}")
-                } finally {
-                    runCatching { pipe.sink.close() }
-                }
-            }
-            pipe
+            newChunkedResponse(Response.Status.OK, "application/zip", startZipPipe(id))
         }
-        val response = newChunkedResponse(Response.Status.OK, "application/zip", body)
         // id is UUID-validated, so it is safe to put in a header.
         response.addHeader("Content-Disposition", "attachment; filename=\"$id.zip\"")
         return response
+    }
+
+    private fun startZipPipe(id: String): InputStream {
+        val pipe = ZipPipe()
+        zipExecutor.execute {
+            try {
+                // The writer gets a sink whose close() is a no-op: ZipOutputStream.use{} in the
+                // writer closes its underlying stream even when it is unwinding from an exception
+                // (close() -> finish() writes a VALID central directory for the entries so far, then
+                // closes the sink). With the real sink that close reached the reader BEFORE the catch
+                // below could set `failure`, so the reader saw a clean EOF and NanoHTTPD sent the
+                // chunk terminator -- the PC got HTTP 200 and a well-formed zip silently missing the
+                // layers after the failure. Only this finally closes the real sink, and only after
+                // `failure` is recorded, so EOF-with-failure is always observable.
+                val ok = zipWriter(id, NonClosingOutputStream(pipe.sink))
+                // Only false if the project vanished between resolveProjectDir and here.
+                if (!ok) pipe.failure = IOException("Project disappeared")
+            } catch (t: Throwable) {
+                // Headers are already on the wire; flag the pipe so the reader errors out and
+                // NanoHTTPD drops the connection without a clean chunk terminator, instead of the
+                // client receiving a truncated zip that looks complete.
+                pipe.failure = t
+                DiagnosticLog.log(appContext, TAG, "Zip export of $id failed: ${t::class.java.simpleName}: ${t.message}")
+            } finally {
+                runCatching { pipe.sink.close() }
+            }
+        }
+        return pipe
     }
 
     private fun thumbnailResponse(dir: File, headOnly: Boolean): Response {
@@ -211,6 +233,17 @@ class SyncServer(
      * clean end-of-stream with a failure recorded is turned into an IOException here -- a plain
      * PipedOutputStream.close() would otherwise look like a normal, complete response.
      */
+    private class NonClosingOutputStream(private val delegate: OutputStream) : OutputStream() {
+        override fun write(b: Int) = delegate.write(b)
+
+        override fun write(b: ByteArray, off: Int, len: Int) = delegate.write(b, off, len)
+
+        override fun flush() = delegate.flush()
+
+        // Flush what the zip trailer wrote, but leave the real sink to the executor's finally.
+        override fun close() = delegate.flush()
+    }
+
     private class ZipPipe : InputStream() {
         private val source = PipedInputStream(PIPE_BYTES)
         val sink = PipedOutputStream(source)

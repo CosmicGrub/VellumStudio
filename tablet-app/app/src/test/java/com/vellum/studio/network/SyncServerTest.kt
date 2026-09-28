@@ -62,7 +62,7 @@ class SyncServerTest {
         server.stop()
     }
 
-    private class RawResponse(val status: Int, val body: String)
+    private class RawResponse(val status: Int, val headers: String, val body: String)
 
     /** Sends [requestLine] verbatim (no client-side normalization) and reads the response to EOF. */
     private fun raw(requestLine: String): RawResponse {
@@ -75,7 +75,7 @@ class SyncServerTest {
             val bytes = ByteArrayOutputStream().also { socket.getInputStream().copyTo(it) }.toByteArray()
             val text = String(bytes, Charsets.ISO_8859_1)
             val status = text.lineSequence().first().split(' ')[1].toInt()
-            return RawResponse(status, text.substringAfter("\r\n\r\n", ""))
+            return RawResponse(status, text.substringBefore("\r\n\r\n"), text.substringAfter("\r\n\r\n", ""))
         }
     }
 
@@ -162,6 +162,80 @@ class SyncServerTest {
         val r = raw("HEAD /projects/$id/export.zip HTTP/1.1")
         assertEquals(200, r.status)
         assertEquals("", r.body)
+        // NanoHTTPD prints a chunked response's length (-1) verbatim on HEAD; .NET HttpClient (the
+        // PC companion) rejects that as malformed, so a HEAD must carry a valid length or none.
+        val lengths = Regex("""(?im)^content-length:\h*(\S+)\h*$""").findAll(r.headers).map { it.groupValues[1] }.toList()
+        assertTrue("Content-Length must be a non-negative integer, was $lengths", lengths.all { it.toLongOrNull()?.let { n -> n >= 0 } == true })
+        assertFalse("HEAD must not advertise chunked framing it will not send", r.headers.contains("chunked", ignoreCase = true))
+    }
+
+    /**
+     * Starts a server whose zip writer is [writer], for driving the mid-stream failure paths. The
+     * writers below mirror the mechanism of a real failure: ProjectRepository.exportProjectZipTo runs
+     * inside ZipOutputStream(out).use{}, so an unreadable layer mid-export unwinds through close(),
+     * which finish()es a valid-looking archive and closes the sink it was given.
+     */
+    private fun <T> withFailingExport(writer: (String, java.io.OutputStream) -> Boolean, block: (String, Int) -> T): T {
+        val id = createProjectId()
+        val failing = SyncServer(repository, app, port = 0, zipWriter = writer)
+        failing.start()
+        try {
+            return block(id, failing.listeningPort)
+        } finally {
+            failing.stop()
+        }
+    }
+
+    private fun assertDownloadErrors(id: String, port: Int) {
+        val conn = URL("http://127.0.0.1:$port/projects/$id/export.zip").openConnection() as HttpURLConnection
+        conn.readTimeout = 10_000
+        assertEquals("headers are already committed as 200 before the zip fails", 200, conn.responseCode)
+        try {
+            conn.inputStream.readBytes()
+        } catch (expected: java.io.IOException) {
+            return
+        }
+        org.junit.Assert.fail("a failed export must surface as a broken response, not a cleanly terminated (truncated) zip")
+    }
+
+    @Test
+    fun `mid-stream zip failure aborts the response instead of ending as a clean truncated zip`() {
+        // A layer that vanishes / can't be read after one entry already went out. The IOException is
+        // thrown INSIDE use{}, so close() runs finish() and closes the sink BEFORE the exception
+        // reaches SyncServer's catch: the regression this pins is the reader seeing EOF with no
+        // failure recorded and NanoHTTPD sending the chunk terminator. The race was probabilistic
+        // (~17% of runs in the review), so repeat it.
+        repeat(40) {
+            withFailingExport({ _, out ->
+                java.util.zip.ZipOutputStream(out).use { zos ->
+                    zos.putNextEntry(ZipEntry("metadata.json"))
+                    zos.write("{}".toByteArray())
+                    zos.closeEntry()
+                    throw java.io.FileNotFoundException("layers/gone.png")
+                }
+                true
+            }) { id, port -> assertDownloadErrors(id, port) }
+        }
+    }
+
+    @Test
+    fun `failure before the first byte and a vanished project both abort the response`() {
+        withFailingExport({ _, _ -> throw IllegalStateException("boom") }) { id, port -> assertDownloadErrors(id, port) }
+        withFailingExport({ _, _ -> false }) { id, port -> assertDownloadErrors(id, port) }
+    }
+
+    @Test
+    fun `the exception message of a failed export never reaches the peer`() {
+        withFailingExport({ _, out ->
+            java.util.zip.ZipOutputStream(out).use { throw java.io.IOException("read failed at /secret/absolute/path") }
+        }) { id, port ->
+            Socket("127.0.0.1", port).use { s ->
+                s.soTimeout = 10_000
+                s.getOutputStream().write("GET /projects/$id/export.zip HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n".toByteArray())
+                val text = String(s.getInputStream().readBytes(), Charsets.ISO_8859_1)
+                assertFalse(text.contains("/secret/absolute/path"))
+            }
+        }
     }
 
     @Test
