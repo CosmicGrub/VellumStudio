@@ -35,8 +35,13 @@ jobs:
           java-version: "17"
           cache: gradle
 
+      # v4, not v3: v3's default package list still asks sdkmanager for the deprecated "tools"
+      # package, which the current runner image's cmdline-tools no longer has, so this step failed
+      # every run ("Failed to find package 'tools'", exit 1) before a single test started. v4 drops
+      # "tools" from the default list and moves to Node 24. Found 2026-09-28, when the first CI run
+      # after GitHub's billing block cleared died here (the identical step passed on 2026-09-12).
       - name: Set up Android SDK
-        uses: android-actions/setup-android@v3
+        uses: android-actions/setup-android@v4
 
       - name: Grant execute permission for gradlew
         run: chmod +x ./gradlew
