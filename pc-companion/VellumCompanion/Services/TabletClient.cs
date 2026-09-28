@@ -1,6 +1,8 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Linq;
+using System.Net;
 using System.Net.Http;
 using System.Text.Json;
 using System.Threading;
@@ -18,9 +20,18 @@ namespace VellumCompanion.Services;
 ///   GET /projects                -> JSON array of ProjectSummary
 ///   GET /projects/{id}/export.zip -> zip containing the flattened PNG,
 ///                                     individual layer PNGs, and metadata.json
+///
+/// Every request must carry the 6-digit pairing PIN the tablet shows on its Connect screen, as an
+/// X-Vellum-Pin header. Without it (or with a wrong one) the tablet answers 401; after five wrong PINs
+/// it answers 429 for the rest of that sync session and only a Stop/Start on the tablet (which makes a
+/// new PIN) clears it. This is plain HTTP: the PIN keeps other people on the network out, it does not
+/// encrypt anything.
 /// </summary>
 public sealed class TabletClient : IDisposable
 {
+    public const string PinHeader = "X-Vellum-Pin";
+    public const int PinLength = 6;
+
     private readonly HttpClient _httpClient;
     private static readonly JsonSerializerOptions JsonOptions = new()
     {
@@ -64,16 +75,69 @@ public sealed class TabletClient : IDisposable
     }
 
     /// <summary>
+    /// Normalizes what the user typed into the PIN box (tolerating a space or dash they copied from
+    /// the tablet, e.g. "123 456") and rejects anything that is not exactly 6 digits, so a typo is
+    /// caught here instead of costing one of the tablet's five allowed attempts.
+    /// </summary>
+    public static string NormalizePin(string? entered)
+    {
+        var digits = new string((entered ?? string.Empty).Where(char.IsAsciiDigit).ToArray());
+        if (digits.Length != PinLength)
+        {
+            throw new ArgumentException(
+                $"Enter the {PinLength}-digit PIN shown on the tablet's Connect screen.", nameof(entered));
+        }
+
+        return digits;
+    }
+
+    /// <summary>
+    /// Sends a GET carrying the PIN and turns the tablet's auth refusals into <see cref="TabletAuthException"/>
+    /// with a message the user can act on. Any other non-success status is left to EnsureSuccessStatusCode.
+    /// </summary>
+    private async Task<HttpResponseMessage> SendAsync(
+        string requestUri,
+        string pin,
+        HttpCompletionOption completion,
+        CancellationToken cancellationToken)
+    {
+        using var request = new HttpRequestMessage(HttpMethod.Get, requestUri);
+        request.Headers.Add(PinHeader, pin);
+
+        var response = await _httpClient
+            .SendAsync(request, completion, cancellationToken)
+            .ConfigureAwait(false);
+
+        if (response.StatusCode == HttpStatusCode.Unauthorized)
+        {
+            response.Dispose();
+            throw new TabletAuthException(
+                "The tablet rejected the PIN. Check the PIN on the tablet's Connect screen and try again.",
+                locked: false);
+        }
+
+        if (response.StatusCode == HttpStatusCode.TooManyRequests)
+        {
+            response.Dispose();
+            throw new TabletAuthException(
+                "The tablet locked itself after too many wrong PINs. On the tablet, tap Stop then Start Wi-Fi Sync to get a new PIN.",
+                locked: true);
+        }
+
+        return response;
+    }
+
+    /// <summary>
     /// Fetches the list of projects currently on the tablet via GET /projects.
     /// </summary>
     public async Task<IReadOnlyList<ProjectSummary>> GetProjectsAsync(
         string baseUrl,
+        string pin,
         CancellationToken cancellationToken = default)
     {
         var requestUri = $"{baseUrl}/projects";
 
-        using var response = await _httpClient
-            .GetAsync(requestUri, cancellationToken)
+        using var response = await SendAsync(requestUri, pin, HttpCompletionOption.ResponseContentRead, cancellationToken)
             .ConfigureAwait(false);
 
         response.EnsureSuccessStatusCode();
@@ -98,14 +162,14 @@ public sealed class TabletClient : IDisposable
     /// </summary>
     public async Task DownloadProjectZipAsync(
         string baseUrl,
+        string pin,
         string projectId,
         string destinationFilePath,
         CancellationToken cancellationToken = default)
     {
         var requestUri = $"{baseUrl}/projects/{Uri.EscapeDataString(projectId)}/export.zip";
 
-        using var response = await _httpClient
-            .GetAsync(requestUri, HttpCompletionOption.ResponseHeadersRead, cancellationToken)
+        using var response = await SendAsync(requestUri, pin, HttpCompletionOption.ResponseHeadersRead, cancellationToken)
             .ConfigureAwait(false);
 
         response.EnsureSuccessStatusCode();
@@ -122,4 +186,19 @@ public sealed class TabletClient : IDisposable
     {
         _httpClient.Dispose();
     }
+}
+
+/// <summary>
+/// The tablet refused the request's PIN (401) or has locked itself after too many wrong ones (429).
+/// Kept separate from HttpRequestException so the window can show the fix instead of "401 Unauthorized".
+/// </summary>
+public sealed class TabletAuthException : Exception
+{
+    public TabletAuthException(string message, bool locked) : base(message)
+    {
+        Locked = locked;
+    }
+
+    /// <summary>True when the tablet is locked out (429): retrying, even with the right PIN, cannot succeed.</summary>
+    public bool Locked { get; }
 }

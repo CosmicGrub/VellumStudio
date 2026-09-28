@@ -19,7 +19,9 @@
         <Grid Grid.Row="0" Margin="0,0,0,10">
             <Grid.ColumnDefinitions>
                 <ColumnDefinition Width="Auto" />
-                <ColumnDefinition Width="260" />
+                <ColumnDefinition Width="200" />
+                <ColumnDefinition Width="Auto" />
+                <ColumnDefinition Width="90" />
                 <ColumnDefinition Width="Auto" />
             </Grid.ColumnDefinitions>
 
@@ -33,13 +35,26 @@
                      Text="192.168.1.23:8642"
                      VerticalAlignment="Center"
                      Padding="4"
-                     ToolTip="LAN IP and port of the tablet's sync server. Default port is 8642." />
+                     ToolTip="LAN IP and port shown on the tablet's Connect screen. Default port is 8642." />
+
+            <TextBlock Grid.Column="2"
+                       Text="PIN:"
+                       VerticalAlignment="Center"
+                       Margin="12,0,8,0" />
+
+            <TextBox x:Name="PinTextBox"
+                     Grid.Column="3"
+                     MaxLength="7"
+                     VerticalAlignment="Center"
+                     Padding="4"
+                     ToolTip="The 6-digit PIN shown on the tablet's Connect screen. It changes every time sync is started." />
 
             <Button x:Name="ConnectButton"
-                    Grid.Column="2"
+                    Grid.Column="4"
                     Content="Connect"
                     Margin="8,0,0,0"
                     Padding="14,4"
+                    IsDefault="True"
                     Click="ConnectButton_Click" />
         </Grid>
 
