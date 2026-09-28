@@ -137,8 +137,16 @@ object DiagnosticLog {
     }
 
     /** One-line device/app identity banner, meant to lead off "app start" so an exported log is
-     * self-describing without needing separate device info alongside it. */
+     * self-describing without needing separate device info alongside it. Carries the git commit and
+     * branch the APK was built from ([buildIdentity]): three near-identical branch builds (main and the
+     * two device branches) are in circulation, so a log that only said "0.2.1" could not say which
+     * one it came from. */
     fun deviceBanner(): String =
         "${Build.MANUFACTURER} ${Build.MODEL}, Android ${Build.VERSION.RELEASE} (API ${Build.VERSION.SDK_INT}), " +
-            "Vellum Studio ${BuildConfig.VERSION_NAME}"
+            "Vellum Studio ${buildIdentity()}"
+
+    /** `0.2.1 (a1b2c3d4e5 on main)` -- version plus the commit/branch stamped into BuildConfig at
+     * build time (`unknown` when git was unavailable then). Shared by the banner and Settings > About
+     * so the two can never disagree about what build this is. */
+    fun buildIdentity(): String = "${BuildConfig.VERSION_NAME} (${BuildConfig.GIT_SHA} on ${BuildConfig.BRANCH})"
 }

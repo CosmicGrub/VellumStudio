@@ -9,18 +9,110 @@ plugins {
 
 // Real production signing, loaded from a local, gitignored `keystore.properties` at the Gradle
 // root (tablet-app/keystore.properties -- same location/convention as the pre-existing
-// local.properties, see .gitignore). The actual keystore file itself lives OUTSIDE every git
-// worktree entirely (not just gitignored-in-tree), specifically so a stray `git add -f` or a
-// worktree-wide operation can never accidentally stage it. Deliberately optional: a fresh clone,
-// CI runner, or another device-branch worktree that hasn't been given this file falls back to
-// `null` here and the release build type below falls back to debug signing (its prior, documented
-// behavior) rather than failing the build outright -- signing material is exactly the kind of
-// secret that must never be required inline in a checked-in build script.
+// local.properties, see .gitignore; tablet-app/keystore.properties.example is the template). The
+// actual keystore file itself lives OUTSIDE every git worktree entirely (not just
+// gitignored-in-tree), specifically so a stray `git add -f` or a worktree-wide operation can never
+// accidentally stage it. Signing material is exactly the kind of secret that must never be required
+// inline in a checked-in build script, so its ABSENCE must not break the build for everyone: a fresh
+// clone, CI runner (which only runs testDebugUnitTest/lint/assembleDebug) or another worktree
+// configures fine and builds debug. What it must break is a RELEASE artifact -- see the task-graph
+// guard below: this used to fall back to debug signing silently, which yields an APK Android refuses
+// to install over the real-signed one (signature mismatch) with no build-time hint.
 val keystorePropertiesFile = rootProject.file("keystore.properties")
 val releaseSigningConfigProps: Properties? = if (keystorePropertiesFile.exists()) {
-    Properties().apply { load(keystorePropertiesFile.inputStream()) }
+    Properties().apply { keystorePropertiesFile.inputStream().use { load(it) } }
 } else {
     null
+}
+// Present AND usable: all four keys set and the keystore file actually there. A half-filled copy of
+// the .example (still says CHANGE_ME / points nowhere) is treated exactly like a missing file --
+// previously it either NPE'd during configuration or failed deep inside packaging with a keystore
+// error that never mentioned keystore.properties.
+val releaseSigningProblem: String? = when {
+    releaseSigningConfigProps == null -> "tablet-app/keystore.properties does not exist."
+    listOf("storeFile", "storePassword", "keyAlias", "keyPassword").any {
+        releaseSigningConfigProps.getProperty(it).isNullOrBlank()
+    } -> "tablet-app/keystore.properties is missing one of storeFile/storePassword/keyAlias/keyPassword."
+    !file(releaseSigningConfigProps.getProperty("storeFile")).exists() ->
+        "tablet-app/keystore.properties points storeFile at a file that does not exist: " +
+            file(releaseSigningConfigProps.getProperty("storeFile"))
+    else -> null
+}
+
+// One version for all three branches (main + the two device branches): tablet-app/version.properties.
+// Read here rather than hard-coded so a bump is one file, not three hand-edited commits that can
+// drift apart (versionCode drift is silent until an install fails as a downgrade).
+val versionProps = Properties().apply {
+    rootProject.file("version.properties").inputStream().use { load(it) }
+}
+val appVersionCode: Int = versionProps.getProperty("versionCode")?.trim()?.toIntOrNull()
+    ?: throw GradleException("tablet-app/version.properties must define an integer versionCode.")
+val appVersionName: String = versionProps.getProperty("versionName")?.trim()?.takeIf { it.isNotEmpty() }
+    ?: throw GradleException("tablet-app/version.properties must define versionName.")
+
+// Which commit/branch a build came from, baked into BuildConfig so the About text and the first
+// line of every diagnostic log say so (an exported log used to identify neither, which defeats
+// diagnosing a report from a device running one of three near-identical branch builds). Computed at
+// CONFIGURATION time, and never allowed to fail the build: no git on PATH, a source tarball with no
+// .git, or a detached HEAD all degrade to "unknown"/"detached" rather than an error. `git` is run in
+// the Gradle root, which is inside the worktree, so this reports the WORKTREE's own HEAD.
+fun gitOutput(vararg args: String): String? = try {
+    val proc = ProcessBuilder(listOf("git", *args))
+        .directory(rootProject.projectDir)
+        .redirectErrorStream(false)
+        .start()
+    // stderr is never read, so it must not be left as an unread pipe that can fill and block git.
+    proc.errorStream.close()
+    val out = proc.inputStream.bufferedReader().use { it.readText() }.trim()
+    if (proc.waitFor() == 0 && out.isNotEmpty()) out else null
+} catch (e: Exception) {
+    null
+}
+// Restricted to characters that are safe inside a Java string literal (buildConfigField pastes the
+// value verbatim) and inside a file name.
+fun safeToken(raw: String?, fallback: String): String =
+    raw?.replace(Regex("[^A-Za-z0-9._/-]"), "_")?.takeIf { it.isNotEmpty() } ?: fallback
+val gitSha: String = safeToken(gitOutput("rev-parse", "--short=10", "HEAD"), "unknown")
+val gitBranch: String = when (val b = gitOutput("rev-parse", "--abbrev-ref", "HEAD")) {
+    null -> "unknown"
+    "HEAD" -> "detached"
+    else -> safeToken(b, "unknown")
+}
+
+// Set by scripts/verify-style local checks that build a release in a tree with no keystore and never
+// distribute it. The literal property name is a contract with those scripts.
+val allowDebugSignedRelease: Boolean =
+    providers.gradleProperty("allowDebugSignedRelease").orNull.equals("true", ignoreCase = true)
+
+// FAIL CLOSED. Decided once the task graph is known, so it only bites when a release artifact is
+// actually being produced -- `assembleRelease`, `bundleRelease`, `installRelease`, or any task that
+// depends on packaging one -- and never for testDebugUnitTest, lint, assembleDebug, or the
+// nonMinifiedRelease/"benchmark" build type (whose tasks are named ...Benchmark, and which
+// deliberately keeps borrowing the debug fallback below). Failing here, before any compile/R8 work,
+// beats discovering it ten minutes later as a mismatched signature on the device.
+gradle.taskGraph.whenReady {
+    val releaseArtifactTasks = setOf(
+        "assembleRelease", "bundleRelease", "installRelease",
+        "packageRelease", "packageReleaseBundle", "signReleaseBundle",
+    )
+    val requested = allTasks.filter { it.project == project && it.name in releaseArtifactTasks }
+    val problem = releaseSigningProblem
+    if (requested.isNotEmpty() && problem != null) {
+        if (allowDebugSignedRelease) {
+            logger.warn(
+                "WARNING: -PallowDebugSignedRelease=true: building a release variant SIGNED WITH THE DEBUG KEY " +
+                    "($problem). This APK will NOT install over a real-signed Vellum Studio; never distribute it."
+            )
+        } else {
+            throw GradleException(
+                "Refusing to build a release artifact (${requested.first().path}) without real signing: $problem\n" +
+                    "  -> Copy tablet-app/keystore.properties.example to tablet-app/keystore.properties and fill it in " +
+                    "(see docs/RELEASING.md).\n" +
+                    "  -> For a local verification build that will never be distributed, pass " +
+                    "-PallowDebugSignedRelease=true to sign with the debug key instead."
+            )
+        }
+    }
 }
 
 android {
@@ -31,8 +123,11 @@ android {
         applicationId = "com.vellum.studio"
         minSdk = 29
         targetSdk = 36
-        versionCode = 3
-        versionName = "0.2.1"
+        versionCode = appVersionCode
+        versionName = appVersionName
+
+        buildConfigField("String", "GIT_SHA", "\"$gitSha\"")
+        buildConfigField("String", "BRANCH", "\"$gitBranch\"")
 
         // First real use of app/src/androidTest -- see PhotoConverterGoldenMasterInstrumentedTest,
         // the one piece of the PhotoConverter golden-master fixture that needs a live OpenCV
@@ -76,10 +171,13 @@ android {
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
             // Real production signing, generated 2026-09-12 (RSA 4096 / SHA256withRSA, valid to
             // 2056 -- see keystore.properties, which is present locally but never committed).
-            // Falls back to the debug keystore -- this build type's prior, temporary stand-in --
-            // wherever keystore.properties isn't present (CI, a fresh clone, another worktree
-            // that hasn't been provisioned with it), so the build never hard-fails for lack of a
-            // secret it isn't entitled to.
+            // The debug-key fallback on the next line is NOT a way to ship: it is kept because the
+            // release build type is configured in EVERY build (the "benchmark" build type below
+            // copies it via initWith, and that one legitimately signs with debug), and because
+            // -PallowDebugSignedRelease=true asks for exactly it. Actually building a release
+            // ARTIFACT without a usable keystore.properties is refused by the task-graph guard
+            // near the top of this file, so this can no longer produce a mismatched-signature APK
+            // by accident.
             signingConfig = signingConfigs.findByName("release") ?: signingConfigs.getByName("debug")
         }
         debug {
