@@ -988,12 +988,27 @@ class ProjectRepository internal constructor(private val appContext: Context, pr
         if (!root.isDirectory && !root.mkdirs() && !root.isDirectory) throw IOException("Couldn't create the trash folder ${root.path}")
         // The timestamp is the purge clock and the uniqueness suffix: deleting, restoring and deleting
         // the same id again yields a new entry (a same-millisecond repeat just takes the next tick).
-        var stamp = System.currentTimeMillis()
+        //
+        // The while(dest.exists()) loop below only guards against a stamp that is CURRENTLY occupied
+        // in the trash -- it says nothing about a stamp this method already handed out for `id` and
+        // that was since vacated by a restore. Delete, restore, delete again inside the same
+        // millisecond (routine on a fast, otherwise-idle CI runner; caught there, not locally) then
+        // reissues that exact same trash id: the restore's rename frees the old destination before
+        // the second delete's exists() check ever sees it. lastTrashStamp closes that gap by
+        // remembering the highest stamp ever issued for this id (across restores, for the lifetime of
+        // this ProjectRepository) and refusing to go back at or below it.
+        var stamp = maxOf(hooks.nowMs(), (lastTrashStamp[id] ?: 0L) + 1)
         var dest = File(root, "$id$TRASH_SEPARATOR$stamp")
         while (dest.exists()) dest = File(root, "$id$TRASH_SEPARATOR${++stamp}")
         if (!src.renameTo(dest)) throw IOException("Couldn't move project $id into the trash (${src.path} -> ${dest.path}); it was left where it was")
+        lastTrashStamp[id] = stamp
         dest.name
     }
+
+    /** Highest trash-folder stamp [moveIntoTrash] has issued for each id this process has seen, so a
+     * delete that follows a restore of the same id can never reissue a stamp already handed out (see
+     * [moveIntoTrash]). Read and written only inside [trashLock]. */
+    private val lastTrashStamp = HashMap<String, Long>()
 
     /** Everything in the trash, most recently deleted first. Reads only: nothing is created, recovered or repaired. */
     suspend fun listTrash(): List<TrashedProject> = withContext(Dispatchers.IO) {
