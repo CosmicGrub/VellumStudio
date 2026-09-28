@@ -124,7 +124,10 @@ class DrawingCanvasView @JvmOverloads constructor(
 
     // --- stylus stroke state ---
     private var strokePointerId = -1
-    private var strokeRenderer: StrokeRenderer? = null
+    // StrokeEngine (not the concrete StrokeRenderer) -- see StrokeEngine's class doc for why the
+    // view depends on the seam rather than the frozen dab loop directly. DabStrokeEngine is the
+    // only implementation today, and just forwards to an unmodified StrokeRenderer.
+    private var strokeRenderer: StrokeEngine? = null
     private var strokeTargetCanvas: Canvas? = null
     private var strokeTargetLayer: Layer? = null
     private var strokeUsesScratch = false
@@ -180,12 +183,12 @@ class DrawingCanvasView @JvmOverloads constructor(
     private var selectionAnchorCanvasY = 0f
     private var selectionMoveOriginalRect: RectF? = null // MOVING only: the rect's position before this drag
 
-    // Symmetry/mirror drawing (see SymmetryMode): each entry is an independent StrokeRenderer --
+    // Symmetry/mirror drawing (see SymmetryMode): each entry is an independent StrokeEngine --
     // reusing the exact same, already-hardened start()/moveTo() dab-spacing/tilt logic rather than
     // touching it at all -- paired with the coordinate transform that produces its mirrored input
     // from the real stroke's samples. All mirror renderers stamp onto the same strokeTargetCanvas
     // as the real stroke, so they composite and commit together with zero extra wiring elsewhere.
-    private var mirrorRenderers: List<Pair<StrokeRenderer, (Float, Float) -> android.graphics.PointF>> = emptyList()
+    private var mirrorRenderers: List<Pair<StrokeEngine, (Float, Float) -> android.graphics.PointF>> = emptyList()
     private val samplePoint = FloatArray(2)
 
     // toCanvasSpace() writes here instead of returning a boxed Pair<Float,Float> - called once per
@@ -771,7 +774,7 @@ class DrawingCanvasView @JvmOverloads constructor(
         } else {
             eng.currentBrush
         }
-        val renderer = StrokeRenderer(brush, eng.currentColorArgb, eng.brushSizeMultiplier, eng.brushOpacityMultiplier)
+        val renderer = DabStrokeEngine(brush, eng.currentColorArgb, eng.brushSizeMultiplier, eng.brushOpacityMultiplier)
         strokeRenderer = renderer
         strokeTargetLayer = layer
         strokePreviewCompositor.beginStroke()
@@ -788,8 +791,9 @@ class DrawingCanvasView @JvmOverloads constructor(
         }
         // Erasers always route through the scratch mask too (see StrokeRenderer's class doc) so a
         // soft-hardness eraser gets a real graduated falloff instead of a hard CLEAR-mode edge.
-        strokeUsesScratch = !brush.buildUp
-        strokeTargetCanvas = if (strokeUsesScratch) eng.scratch() else Canvas(layer.bitmap)
+        // (see StrokeCommit for the shared scratch-routing decision endStroke's flatten call mirrors)
+        strokeUsesScratch = StrokeCommit.usesScratch(brush)
+        strokeTargetCanvas = StrokeCommit.targetCanvas(eng, layer, brush)
         pendingStroke = eng.undoManager.beginStroke(layer.id, layer.snapshot())
 
         val symmetry = eng.symmetryMode
@@ -797,7 +801,7 @@ class DrawingCanvasView @JvmOverloads constructor(
             emptyList()
         } else {
             symmetry.mirrorTransforms(eng.widthPx / 2f, eng.heightPx / 2f).map { transform ->
-                StrokeRenderer(brush, eng.currentColorArgb, eng.brushSizeMultiplier, eng.brushOpacityMultiplier) to transform
+                DabStrokeEngine(brush, eng.currentColorArgb, eng.brushSizeMultiplier, eng.brushOpacityMultiplier) to transform
             }
         }
 
@@ -869,15 +873,7 @@ class DrawingCanvasView @JvmOverloads constructor(
         val layer = strokeTargetLayer
         val renderer = strokeRenderer
         if (eng != null && layer != null && renderer != null) {
-            if (strokeUsesScratch) {
-                eng.flattenScratchOnto(
-                    layer,
-                    renderer.brush.strokeOpacityCap,
-                    erasing = renderer.brush.category == BrushCategory.ERASER,
-                    mixing = renderer.brush.pigmentMixing,
-                    wetness = renderer.brush.wetness,
-                )
-            }
+            StrokeCommit.flatten(eng, layer, renderer.brush)
             layer.bumpVersion()
             eng.bumpRevision()
             pendingStroke?.commit(layer.snapshot())
@@ -945,33 +941,24 @@ class DrawingCanvasView @JvmOverloads constructor(
     }
 
     /** Redraws [pending]'s recognized geometry onto [layer] through the exact same
-     * StrokeRenderer + scratch/flatten pipeline a real freehand stroke commits through (see
-     * [endStroke]) -- reusing that hardened compositing path rather than a bespoke "draw a shape"
-     * routine, so a snapped shape looks and behaves exactly like a hand-drawn one of the same
+     * StrokeEngine + [StrokeCommit] scratch/flatten pipeline a real freehand stroke commits through
+     * (see [endStroke]) -- reusing that hardened compositing path rather than a bespoke "draw a
+     * shape" routine, so a snapped shape looks and behaves exactly like a hand-drawn one of the same
      * brush would. Synthetic samples use full pressure/no tilt -- a "perfectly drawn" ruler-clean
      * stroke, on purpose. */
     private fun drawShapeOnto(eng: CanvasEngine, layer: Layer, pending: PendingShapeAssist) {
         val path = ShapeAssist.perimeterPoints(pending.candidate)
         if (path.size < 2) return
         val brush = pending.brush
-        val renderer = StrokeRenderer(brush, pending.colorArgb, pending.sizeMultiplier, pending.opacityMultiplier)
-        val usesScratch = !brush.buildUp
-        val target = if (usesScratch) eng.scratch() else Canvas(layer.bitmap)
+        val renderer = DabStrokeEngine(brush, pending.colorArgb, pending.sizeMultiplier, pending.opacityMultiplier)
+        val target = StrokeCommit.targetCanvas(eng, layer, brush)
         val first = path.first()
         renderer.start(target, InputSample(first.x, first.y, pressure = 1f))
         for (i in 1 until path.size) {
             val p = path[i]
             renderer.moveTo(target, InputSample(p.x, p.y, pressure = 1f))
         }
-        if (usesScratch) {
-            eng.flattenScratchOnto(
-                layer,
-                brush.strokeOpacityCap,
-                erasing = brush.category == BrushCategory.ERASER,
-                mixing = brush.pigmentMixing,
-                wetness = brush.wetness,
-            )
-        }
+        StrokeCommit.flatten(eng, layer, brush)
     }
 
     private fun cancelStroke() {
