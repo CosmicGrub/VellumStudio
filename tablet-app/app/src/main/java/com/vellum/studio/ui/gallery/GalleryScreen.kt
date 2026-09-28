@@ -23,7 +23,9 @@ import androidx.compose.material.icons.automirrored.filled.MenuBook
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Brush
 import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.MoreVert
+import androidx.compose.material.icons.filled.RestoreFromTrash
 import androidx.compose.material.icons.filled.School
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Wifi
@@ -41,6 +43,10 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.SnackbarDuration
+import androidx.compose.material3.SnackbarHost
+import androidx.compose.material3.SnackbarHostState
+import androidx.compose.material3.SnackbarResult
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
@@ -63,10 +69,12 @@ import com.vellum.studio.model.CanvasSizePreset
 import com.vellum.studio.model.CanvasSizePresets
 import com.vellum.studio.model.ProjectRepository
 import com.vellum.studio.model.ProjectSummary
+import com.vellum.studio.model.ProjectTooNewException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
+import java.io.IOException
 import java.text.DateFormat
 import java.util.Date
 
@@ -83,7 +91,13 @@ fun GalleryScreen(
     var projects by remember { mutableStateOf<List<ProjectSummary>>(emptyList()) }
     var loading by remember { mutableStateOf(true) }
     var showNewCanvasDialog by remember { mutableStateOf(false) }
+    var showRecentlyDeleted by remember { mutableStateOf(false) }
+    var renameTarget by remember { mutableStateOf<ProjectSummary?>(null) }
     val scope = rememberCoroutineScope()
+    // Hosts the "Deleted <name> - Undo" snackbar (and the delete/rename failure notices). Screen-scoped
+    // on purpose, unlike the editor's save failures: nothing here navigates away in the same click, and
+    // a snackbar lost to navigation costs nothing because the deleted project waits in Recently deleted.
+    val snackbarHostState = remember { SnackbarHostState() }
     // Re-list whenever the library changes underneath us -- a save committing (fresh thumbnail and
     // updatedAt sort position), a delete, a rename -- rather than once per composition. Coming back
     // from the editor used to list while the save Back had just started was still being written,
@@ -101,6 +115,9 @@ fun GalleryScreen(
             TopAppBar(
                 title = { Text("Vellum Studio", fontWeight = FontWeight.SemiBold) },
                 actions = {
+                    IconButton(onClick = { showRecentlyDeleted = true }) {
+                        Icon(Icons.Filled.RestoreFromTrash, contentDescription = "Recently deleted")
+                    }
                     IconButton(onClick = onOpenAcademy) {
                         Icon(Icons.Filled.School, contentDescription = "Academy")
                     }
@@ -116,6 +133,7 @@ fun GalleryScreen(
                 },
             )
         },
+        snackbarHost = { SnackbarHost(snackbarHostState) },
         floatingActionButton = {
             ExtendedFloatingActionButton(
                 onClick = { showNewCanvasDialog = true },
@@ -149,14 +167,30 @@ fun GalleryScreen(
                         ProjectCard(
                             project = project,
                             onClick = { onOpenProject(project.id) },
+                            onRename = { renameTarget = project },
                             onDelete = {
-                                scope.launch { repository.deleteProject(project.id) }
+                                scope.launch { deleteWithUndo(repository, snackbarHostState, project) }
                             },
                         )
                     }
                 }
             }
         }
+    }
+
+    renameTarget?.let { target ->
+        RenameProjectDialog(
+            initialName = target.name,
+            onDismiss = { renameTarget = null },
+            onConfirm = { newName ->
+                renameTarget = null
+                scope.launch { renameWithNotice(repository, snackbarHostState, target, newName) }
+            },
+        )
+    }
+
+    if (showRecentlyDeleted) {
+        RecentlyDeletedDialog(repository = repository, onDismiss = { showRecentlyDeleted = false })
     }
 
     if (showNewCanvasDialog) {
@@ -174,6 +208,45 @@ fun GalleryScreen(
     }
 }
 
+/**
+ * Soft-deletes [project] and offers Undo for the snackbar's Long duration (10s). Undo renames the
+ * folder back out of the trash, so what returns is byte-identical. If the snackbar is dismissed,
+ * swiped away or replaced by the next delete, nothing is lost: the project stays restorable from
+ * Recently deleted for 30 days. A failed move leaves the project untouched and says so.
+ */
+private suspend fun deleteWithUndo(repository: ProjectRepository, snackbar: SnackbarHostState, project: ProjectSummary) {
+    val trashId = try {
+        repository.deleteProject(project.id)
+    } catch (e: IOException) {
+        snackbar.currentSnackbarData?.dismiss()
+        snackbar.showSnackbar("Couldn't delete \"${project.name}\" - it was left as it was")
+        return
+    } ?: return
+    // A second delete must not queue behind the first one's ten seconds: the older Undo window simply closes.
+    snackbar.currentSnackbarData?.dismiss()
+    val result = snackbar.showSnackbar(
+        message = "Deleted \"${project.name}\"",
+        actionLabel = "Undo",
+        withDismissAction = true,
+        duration = SnackbarDuration.Long,
+    )
+    if (result == SnackbarResult.ActionPerformed && !repository.restoreProject(trashId)) {
+        snackbar.showSnackbar("Couldn't restore \"${project.name}\" - look in Recently deleted")
+    }
+}
+
+/** Renames via [ProjectRepository.renameProjectById]; a refusal (newer build, unreadable metadata) or IO failure is told to the user instead of dropped. */
+private suspend fun renameWithNotice(repository: ProjectRepository, snackbar: SnackbarHostState, project: ProjectSummary, newName: String) {
+    val message = try {
+        if (repository.renameProjectById(project.id, newName)) null else "Couldn't rename \"${project.name}\""
+    } catch (e: ProjectTooNewException) {
+        e.userMessage
+    } catch (e: IOException) {
+        "Couldn't rename \"${project.name}\": ${e.message}"
+    }
+    if (message != null) snackbar.showSnackbar(message)
+}
+
 @Composable
 private fun EmptyState(modifier: Modifier = Modifier) {
     Column(modifier, horizontalAlignment = Alignment.CenterHorizontally) {
@@ -184,7 +257,7 @@ private fun EmptyState(modifier: Modifier = Modifier) {
 }
 
 @Composable
-private fun ProjectCard(project: ProjectSummary, onClick: () -> Unit, onDelete: () -> Unit) {
+private fun ProjectCard(project: ProjectSummary, onClick: () -> Unit, onRename: () -> Unit, onDelete: () -> Unit) {
     var menuOpen by remember { mutableStateOf(false) }
     val cardBody: @Composable () -> Unit = {
         Column {
@@ -227,6 +300,15 @@ private fun ProjectCard(project: ProjectSummary, onClick: () -> Unit, onDelete: 
                         Icon(Icons.Filled.MoreVert, contentDescription = "Options")
                     }
                     DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
+                        // Only for a project whose metadata this build can read AND safely rewrite: a
+                        // newer-schema or damaged one is refused by the repository, so don't offer it.
+                        if (project.isOpenable && !project.isDamaged) {
+                            DropdownMenuItem(
+                                text = { Text("Rename") },
+                                leadingIcon = { Icon(Icons.Filled.Edit, contentDescription = null) },
+                                onClick = { menuOpen = false; onRename() },
+                            )
+                        }
                         DropdownMenuItem(
                             text = { Text("Delete") },
                             leadingIcon = { Icon(Icons.Filled.Delete, contentDescription = null) },
@@ -248,7 +330,7 @@ private fun ProjectCard(project: ProjectSummary, onClick: () -> Unit, onDelete: 
 }
 
 @Composable
-private fun ThumbnailImage(file: File?, modifier: Modifier = Modifier) {
+internal fun ThumbnailImage(file: File?, modifier: Modifier = Modifier) {
     if (file == null) {
         Box(modifier)
         return
@@ -271,6 +353,22 @@ private fun ThumbnailImage(file: File?, modifier: Modifier = Modifier) {
     } else {
         Box(modifier)
     }
+}
+
+@Composable
+private fun RenameProjectDialog(initialName: String, onDismiss: () -> Unit, onConfirm: (String) -> Unit) {
+    var name by remember { mutableStateOf(initialName) }
+    val trimmed = name.trim()
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Rename canvas") },
+        text = { OutlinedTextField(value = name, onValueChange = { name = it }, label = { Text("Name") }, singleLine = true) },
+        confirmButton = {
+            // A blank name would leave a nameless card; an unchanged one has nothing to write.
+            TextButton(onClick = { onConfirm(trimmed) }, enabled = trimmed.isNotEmpty() && trimmed != initialName) { Text("Rename") }
+        },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } },
+    )
 }
 
 @OptIn(ExperimentalMaterial3Api::class)

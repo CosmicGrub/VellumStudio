@@ -147,6 +147,21 @@ data class ProjectSummary(
     val isDamaged: Boolean get() = damage != null
 }
 
+/**
+ * One deleted project waiting in the trash (see [ProjectRepository.deleteProject]). [trashId] is the
+ * trash folder's own name and the handle every trash operation takes; it is NOT [projectId], because
+ * the same project can be trashed, restored and trashed again. [name] is read best-effort from the
+ * trashed metadata.json (never through the recovery path) purely so the row is recognizable.
+ */
+data class TrashedProject(
+    val trashId: String,
+    val projectId: String,
+    val name: String,
+    /** Epoch millis of the delete, from the folder name: the clock the 30-day purge runs on. */
+    val deletedAt: Long,
+    val thumbnailFile: File?,
+)
+
 /** A named starting size for the "New Canvas" dialog. */
 data class CanvasSizePreset(val label: String, val widthPx: Int, val heightPx: Int)
 

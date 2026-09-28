@@ -36,7 +36,7 @@ class SyncServer(
                 uri.startsWith("/projects/") && uri.endsWith("/export.zip") -> exportZipResponse(uri)
                 uri.startsWith("/projects/") && uri.endsWith("/thumbnail.png") -> thumbnailResponse(uri)
                 uri == "/mirror/frame.jpg" -> mirrorFrameResponse()
-                else -> newFixedLengthResponse(Response.Status.NOT_FOUND, MIME_PLAINTEXT, "Not found")
+                else -> notFound()
             }
         } catch (e: Exception) {
             newFixedLengthResponse(Response.Status.INTERNAL_ERROR, MIME_PLAINTEXT, "Error: ${e.message}")
@@ -73,6 +73,7 @@ class SyncServer(
 
     private fun exportZipResponse(uri: String): Response {
         val id = uri.removePrefix("/projects/").removeSuffix("/export.zip")
+        if (!isServableProject(id)) return notFound()
         val zip = runBlocking { repository.exportProjectZip(id) }
         val response = newFixedLengthResponse(Response.Status.OK, "application/zip", FileInputStream(zip), zip.length())
         response.addHeader("Content-Disposition", "attachment; filename=\"$id.zip\"")
@@ -81,10 +82,23 @@ class SyncServer(
 
     private fun thumbnailResponse(uri: String): Response {
         val id = uri.removePrefix("/projects/").removeSuffix("/thumbnail.png")
+        if (!isServableProject(id)) return notFound()
         val file = repository.projectDir(id).resolve("thumbnail.png")
         if (!file.exists()) return newFixedLengthResponse(Response.Status.NOT_FOUND, MIME_PLAINTEXT, "No thumbnail")
         return newFixedLengthResponse(Response.Status.OK, "image/png", FileInputStream(file), file.length())
     }
+
+    private fun notFound() = newFixedLengthResponse(Response.Status.NOT_FOUND, MIME_PLAINTEXT, "Not found")
+
+    /**
+     * Whether [id] names a real project folder to serve. The id is spliced into a file path straight
+     * from the URL, and NanoHTTPD does not normalize `..`, so `/projects/../.trash/<entry>/export.zip`
+     * used to reach outside `projects/` -- which would hand a soft-deleted (trashed) project to
+     * anyone on the LAN. Only a plain single-segment id that is an existing directory is served; an
+     * unknown id is now a 404 instead of an empty zip.
+     */
+    private fun isServableProject(id: String): Boolean =
+        ProjectRepository.isPlainProjectId(id) && repository.projectDir(id).isDirectory
 
     private fun mirrorFrameResponse(): Response {
         val engine = LiveCanvasBridge.activeEngine

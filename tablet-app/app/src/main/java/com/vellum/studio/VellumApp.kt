@@ -9,6 +9,10 @@ import com.vellum.studio.model.SettingsRepository
 import com.vellum.studio.model.UserPhotoTemplateRepository
 import com.vellum.studio.util.DiagnosticLog
 import com.vellum.studio.util.RecoveryNotices
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.launch
 
 class VellumApp : Application() {
     // Kept as a named Lazy so onTrimMemory can ask "was it ever created" without creating it.
@@ -31,6 +35,14 @@ class VellumApp : Application() {
         // here) is captured too.
         DiagnosticLog.install(this)
         DiagnosticLog.log(this, "Lifecycle", "App started (${DiagnosticLog.deviceBanner()})")
+        // Recently deleted keeps a project for ProjectRepository.TRASH_RETENTION_MS (30 days); this is
+        // where older ones are finally removed. Off the main thread (it lists and deletes folders),
+        // best-effort (an unpurged entry is simply retried next launch), and it creates nothing when
+        // there is no trash. Process-lifetime scope: there is nothing to cancel it for.
+        CoroutineScope(SupervisorJob() + Dispatchers.IO).launch {
+            runCatching { repository.purgeExpiredTrash() }
+                .onFailure { DiagnosticLog.log(this@VellumApp, "Lifecycle", "Trash purge failed: ${it.javaClass.simpleName}: ${it.message}") }
+        }
     }
 
     /**

@@ -76,6 +76,18 @@ import java.util.zip.ZipOutputStream
  * ([ProjectSummary.newerSchemaVersion]), and [loadProject], [requestSave] and [renameProject] refuse
  * it with [ProjectTooNewException] without touching a file -- it is never fed to the "recovery" path
  * that would replace it with a lossy stand-in. Delete is still allowed: it is the user's explicit act.
+ *
+ * SOFT DELETE: [deleteProject] never destroys anything. It renames the project folder into
+ * `<app-external-files>/.trash/<id>__<epochMs>/` ([TRASH_DIR_NAME]) -- same volume, so one atomic
+ * rename and the bytes are untouched -- and [restoreProject] renames it back, which is why Undo can
+ * promise a byte-identical project. The trash is a SIBLING of `projects/`, not a dot-folder inside
+ * it, on purpose: everything that walks `projects/` ([listProjects], [findProjectBySourceTemplateId],
+ * and through them the LAN SyncServer) then cannot see it, and above all cannot feed a trashed
+ * folder to [recoverFromLayerFiles], which would resurrect it as a phantom "Recovered Project" (a
+ * trashed folder whose metadata is missing still has layer PNGs). Those walks additionally skip any
+ * dot-prefixed entry as a second, independent guard. [purgeExpiredTrash] is the only thing that
+ * ever destroys trashed data automatically, after [TRASH_RETENTION_MS]; "Delete forever" is the
+ * user's explicit act.
  */
 class ProjectRepository internal constructor(private val appContext: Context, private val hooks: SaveHooks) {
 
@@ -87,7 +99,8 @@ class ProjectRepository internal constructor(private val appContext: Context, pr
 
     /**
      * Ticks whenever what the gallery would list changed: a save committed (new thumbnail and
-     * updatedAt/sort position), a project was deleted or renamed. The gallery re-lists on every tick
+     * updatedAt/sort position), a project was deleted, restored or renamed (and, for the Recently
+     * deleted view, whenever the trash itself changed). The gallery re-lists on every tick
      * instead of once per composition, so a card can never keep showing the thumbnail from before
      * the save that finished after the gallery loaded (Back used to navigate ahead of the write).
      * Ticked at the end of the write, before its waiters are released, so anything that awaited a
@@ -168,6 +181,26 @@ class ProjectRepository internal constructor(private val appContext: Context, pr
 
     private val projectsRoot: File
         get() = File(appContext.getExternalFilesDir(null), "projects").apply { mkdirs() }
+
+    /**
+     * The trash: a sibling of [projectsRoot], deliberately outside it (see the class doc). Unlike
+     * [projectsRoot] the getter creates nothing -- reading an absent trash (the start-up purge, the
+     * Recently deleted view) must not leave a folder behind; only a delete makes it.
+     */
+    private val trashRoot: File
+        get() = File(appContext.getExternalFilesDir(null), TRASH_DIR_NAME)
+
+    /** Serializes every trash-folder mutation (delete-into, restore, delete-forever, purge) so none can act on an entry another is moving. Always taken INSIDE a project lock, never around one. */
+    private val trashLock = Any()
+
+    /**
+     * The project folders a listing may treat as projects: directories under `projects/` minus any
+     * dot-prefixed one. Ids are UUIDs, so a dot-prefixed name is never a project; skipping them is
+     * the second guard (after the trash living outside `projects/`) against a trash-like folder
+     * being "recovered" into a phantom project by [loadOrRecoverMeta].
+     */
+    private fun projectDirs(): Array<File> =
+        projectsRoot.listFiles { f -> f.isDirectory && !f.name.startsWith(".") } ?: emptyArray()
 
     private fun dirFor(id: String) = File(projectsRoot, id)
     private fun metaFile(id: String) = File(dirFor(id), "metadata.json")
@@ -423,8 +456,7 @@ class ProjectRepository internal constructor(private val appContext: Context, pr
     }
 
     suspend fun listProjects(): List<ProjectSummary> = withContext(Dispatchers.IO) {
-        val dirs = projectsRoot.listFiles { f -> f.isDirectory } ?: emptyArray()
-        dirs.mapNotNull { dir ->
+        projectDirs().mapNotNull { dir ->
             when (val read = loadOrRecoverMeta(dir.name)) {
                 null -> null
                 is MetaRead.Found -> {
@@ -521,10 +553,9 @@ class ProjectRepository internal constructor(private val appContext: Context, pr
      * as [listProjects] itself (this app's project counts are gallery-sized, not database-sized).
      */
     suspend fun findProjectBySourceTemplateId(templateId: String): String? = withContext(Dispatchers.IO) {
-        val dirs = projectsRoot.listFiles { f -> f.isDirectory } ?: emptyArray()
         // A newer-schema project is skipped (its template link is not something this build can trust
         // to read); it is not opened either way, so a repeat tap makes a fresh project instead.
-        dirs.firstNotNullOfOrNull { dir -> (loadOrRecoverMeta(dir.name) as? MetaRead.Found)?.meta?.takeIf { it.sourceTemplateId == templateId }?.id }
+        projectDirs().firstNotNullOfOrNull { dir -> (loadOrRecoverMeta(dir.name) as? MetaRead.Found)?.meta?.takeIf { it.sourceTemplateId == templateId }?.id }
     }
 
     /**
@@ -859,15 +890,175 @@ class ProjectRepository internal constructor(private val appContext: Context, pr
         updated
     }
 
-    suspend fun deleteProject(id: String) = withContext(Dispatchers.IO) {
-        coordinator.withProjectLock(id) {
-            dirFor(id).deleteRecursively()
+    /**
+     * Renames the project on disk as [id], for callers (the gallery card menu) that hold only a
+     * [ProjectSummary] and so must not write a stale [ProjectMeta] back. Reads the current
+     * metadata.json under the project lock and rewrites it with just the name (and updatedAt)
+     * changed. Returns false, touching nothing, when there is no readable metadata.json to rename:
+     * a damaged or absent one is never "renamed" into a recovered stand-in. A project the editor
+     * currently has open must not be renamed this way (its autosaver would write the old name back);
+     * the gallery cannot be showing one.
+     *
+     * @throws ProjectTooNewException if the project on disk was saved by a newer build (it is left untouched).
+     */
+    suspend fun renameProjectById(id: String, newName: String): Boolean = withContext(Dispatchers.IO) {
+        require(isPlainProjectId(id)) { "Not a project id: $id" }
+        val renamed = coordinator.withProjectLock(id) {
+            requireNotNewerOnDisk(id)
+            val current = (readMetaFile(id, metaFile(id)) as? MetaRead.Found)?.meta
+            if (current == null) {
+                false
+            } else {
+                val updated = current.copy(name = newName, updatedAt = System.currentTimeMillis())
+                DurableFile.writeText(metaFile(id), json.encodeToString(updated), keepBackup = true, backupIsValid = ::isParseableMeta)
+                true
+            }
+        }
+        if (renamed) libraryChanged()
+        renamed
+    }
+
+    /**
+     * Soft delete: moves project [id]'s folder into the trash and returns the trash id to hand to
+     * [restoreProject] (the gallery's Undo), or null if there was no such project. Nothing is
+     * copied, re-encoded or removed -- one atomic same-volume rename -- so a restore is
+     * byte-identical. Runs under the project lock, so it never lands between a save's layer writes
+     * and its metadata commit.
+     *
+     * If the rename fails the project stays exactly where it was and this throws [IOException]; it
+     * deliberately does NOT fall back to deleting, because "delete failed, nothing lost" is the only
+     * acceptable failure mode for a call the user made by tapping a card menu.
+     *
+     * @throws IOException if the folder could not be moved into the trash.
+     */
+    suspend fun deleteProject(id: String): String? = withContext(Dispatchers.IO) {
+        // "" resolves to the projects root itself and ".." to its parent: never a project folder.
+        require(isPlainProjectId(id)) { "Not a project id: $id" }
+        val trashId = coordinator.withProjectLock(id) {
+            val src = dirFor(id)
+            val moved = if (src.isDirectory) moveIntoTrash(id, src) else null
             val state = coordinator.stateFor(id)
             state.savedVersions.clear()
             state.clearThumbs()
+            moved
         }
+        if (trashId != null) DiagnosticLog.log(appContext, "ProjectRepository", "Project $id moved to trash as $trashId")
         libraryChanged()
-        Unit
+        trashId
+    }
+
+    private fun moveIntoTrash(id: String, src: File): String = synchronized(trashLock) {
+        val root = trashRoot
+        if (!root.isDirectory && !root.mkdirs() && !root.isDirectory) throw IOException("Couldn't create the trash folder ${root.path}")
+        // The timestamp is the purge clock and the uniqueness suffix: deleting, restoring and deleting
+        // the same id again yields a new entry (a same-millisecond repeat just takes the next tick).
+        var stamp = System.currentTimeMillis()
+        var dest = File(root, "$id$TRASH_SEPARATOR$stamp")
+        while (dest.exists()) dest = File(root, "$id$TRASH_SEPARATOR${++stamp}")
+        if (!src.renameTo(dest)) throw IOException("Couldn't move project $id into the trash (${src.path} -> ${dest.path}); it was left where it was")
+        dest.name
+    }
+
+    /** Everything in the trash, most recently deleted first. Reads only: nothing is created, recovered or repaired. */
+    suspend fun listTrash(): List<TrashedProject> = withContext(Dispatchers.IO) {
+        (trashRoot.listFiles { f -> f.isDirectory } ?: emptyArray()).mapNotNull { dir ->
+            // Anything that is not one of ours (no `__<epochMs>` suffix) is ignored, and so is never purged.
+            val (projectId, deletedAt) = parseTrashName(dir.name) ?: return@mapNotNull null
+            TrashedProject(dir.name, projectId, readTrashedName(dir), deletedAt, File(dir, "thumbnail.png").takeIf { it.exists() })
+        }.sortedByDescending { it.deletedAt }
+    }
+
+    /** The name in a trashed project's metadata.json (or its `.bak`), tolerantly; never goes through [loadOrRecoverMeta]. */
+    private fun readTrashedName(dir: File): String {
+        val mf = File(dir, "metadata.json")
+        for (file in listOf(mf, DurableFile.bakFor(mf))) {
+            val name = runCatching {
+                (json.parseToJsonElement(file.readText()).jsonObject["name"] as? JsonPrimitive)?.contentOrNull
+            }.getOrNull()
+            if (!name.isNullOrBlank()) return name
+        }
+        return "Untitled"
+    }
+
+    /**
+     * Undo: renames trash entry [trashId] back to `projects/<id>`. False (entry left in the trash)
+     * if it is gone or a project with that id exists again -- restoring never overwrites or merges.
+     */
+    suspend fun restoreProject(trashId: String): Boolean = withContext(Dispatchers.IO) {
+        val projectId = parseTrashName(trashId)?.takeIf { isPlainProjectId(trashId) }?.first ?: return@withContext false
+        val restored = coordinator.withProjectLock(projectId) {
+            synchronized(trashLock) {
+                val src = File(trashRoot, trashId)
+                val dest = dirFor(projectId)
+                when {
+                    !src.isDirectory -> false
+                    dest.exists() -> {
+                        DiagnosticLog.log(appContext, "ProjectRepository", "Not restoring $trashId: project $projectId already exists")
+                        false
+                    }
+                    else -> src.renameTo(dest).also {
+                        if (!it) DiagnosticLog.log(appContext, "ProjectRepository", "Restore of $trashId failed: rename to ${dest.path} was refused")
+                    }
+                }
+            }
+        }
+        if (restored) libraryChanged()
+        restored
+    }
+
+    /** "Delete forever": permanently removes trash entry [trashId]. Only ever the user's explicit act; never called by anything automatic. */
+    suspend fun deleteTrashedProject(trashId: String): Boolean = withContext(Dispatchers.IO) {
+        if (!isPlainProjectId(trashId) || parseTrashName(trashId) == null) return@withContext false
+        val gone = synchronized(trashLock) { File(trashRoot, trashId).let { !it.exists() || it.deleteRecursively() } }
+        libraryChanged()
+        gone
+    }
+
+    /**
+     * Permanently removes trash entries deleted [maxAgeMs] or more before [nowMs] (30 days by
+     * default); returns how many went. Only entries this class named (`<id>__<epochMs>`) are
+     * considered. The age is the timestamp in the name -- not the folder's mtime, which a rename
+     * does not touch -- and an entry stamped in the future (clock set back) is simply not old.
+     * Creates nothing, so a first-ever launch with no trash does no writes.
+     */
+    suspend fun purgeExpiredTrash(nowMs: Long = System.currentTimeMillis(), maxAgeMs: Long = TRASH_RETENTION_MS): Int = withContext(Dispatchers.IO) {
+        val purged = synchronized(trashLock) {
+            (trashRoot.listFiles { f -> f.isDirectory } ?: emptyArray()).count { dir ->
+                val deletedAt = parseTrashName(dir.name)?.second ?: return@count false
+                nowMs - deletedAt >= maxAgeMs && dir.deleteRecursively().also {
+                    DiagnosticLog.log(appContext, "ProjectRepository", "Trash: ${dir.name} older than the retention window; ${if (it) "purged" else "COULD NOT be purged (will retry)"}")
+                }
+            }
+        }
+        if (purged > 0) libraryChanged()
+        purged
+    }
+
+    /** `<id>__<epochMs>` -> (id, epochMs); null for a name this class did not produce. UUIDs contain no underscore, so the LAST separator is the split. */
+    private fun parseTrashName(name: String): Pair<String, Long>? {
+        val at = name.lastIndexOf(TRASH_SEPARATOR)
+        if (at <= 0) return null
+        val stamp = name.substring(at + TRASH_SEPARATOR.length).toLongOrNull() ?: return null
+        return name.substring(0, at) to stamp
+    }
+
+    companion object {
+        /** Dot-prefixed so nothing that lists a directory for projects, media or backups mistakes it for content. */
+        const val TRASH_DIR_NAME = ".trash"
+
+        /** How long a deleted project stays restorable before [purgeExpiredTrash] removes it. */
+        const val TRASH_RETENTION_MS = 30L * 24 * 60 * 60 * 1000
+
+        private const val TRASH_SEPARATOR = "__"
+
+        /**
+         * True for a name that is a single, plain path segment and not dot-prefixed -- the shape of
+         * every project id and trash id this class produces. Guards the paths built from a caller- or
+         * network-supplied id (`projects/<id>`), where "" or ".." would otherwise resolve to the
+         * projects root, its parent (which holds the trash) or a sibling.
+         */
+        fun isPlainProjectId(id: String): Boolean =
+            id.isNotEmpty() && !id.startsWith(".") && id.none { it == '/' || it == '\\' || it == '\u0000' }
     }
 
     /** Flattens and inserts a PNG into the device gallery under Pictures/Vellum Studio. */
