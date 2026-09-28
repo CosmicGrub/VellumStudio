@@ -44,7 +44,9 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
+import androidx.compose.material3.SnackbarDuration
 import androidx.compose.material3.SnackbarHostState
+import androidx.compose.material3.SnackbarResult
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
@@ -74,6 +76,7 @@ import com.vellum.studio.util.Printing
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import java.io.IOException
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -141,9 +144,21 @@ fun ColoringBookScreen(
                 photoErrorMessage = "Couldn't convert this photo. Try a different one."
                 return@launch
             }
-            val saved = userPhotoTemplateRepository.save(name, preset, result)
-            result.reference.recycle()
-            result.lineArt.recycle()
+            // save() throws when an image could not be fully written (full disk) or the My Photos
+            // index is damaged and could not be set aside; nothing half-written is left indexed.
+            val saved = try {
+                userPhotoTemplateRepository.save(name, preset, result)
+            } catch (_: IOException) {
+                null
+            } finally {
+                result.reference.recycle()
+                result.lineArt.recycle()
+            }
+            if (saved == null) {
+                convertingPhoto = false
+                photoErrorMessage = "Couldn't save this photo. Check that the device has free storage, then try again."
+                return@launch
+            }
             userPhotoTemplates = userPhotoTemplateRepository.list()
             convertingPhoto = false
             photoResultMessage = if (saved.isPaintByNumberEligible) {
@@ -156,8 +171,21 @@ fun ColoringBookScreen(
 
     fun deletePhotoTemplate(template: UserPhotoTemplate) {
         scope.launch {
+            // Soft delete: the files sit in the repository's trash while the Undo snackbar is up (the
+            // source photo isn't kept, so they are the only copy). Long is ~10s; if this scope is
+            // cancelled first (screen left) the snackbar is gone with it, so nothing can undo any more
+            // and the files are cleared by the next app start's sweep.
             userPhotoTemplates = userPhotoTemplateRepository.delete(template.id)
-            snackbarHostState.showSnackbar("Removed \"${template.name}\" from My Photos")
+            val result = snackbarHostState.showSnackbar(
+                "Removed \"${template.name}\" from My Photos",
+                actionLabel = "Undo",
+                duration = SnackbarDuration.Long,
+            )
+            if (result == SnackbarResult.ActionPerformed) {
+                userPhotoTemplates = userPhotoTemplateRepository.restore(template)
+            } else {
+                userPhotoTemplateRepository.purgeDeleted(template)
+            }
         }
     }
 

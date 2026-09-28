@@ -8,27 +8,46 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import java.util.UUID
 
-/** Compositing modes exposed in the layers panel, backed by [android.graphics.BlendMode] (API 29+). */
-enum class LayerBlendMode(val label: String, val blendMode: BlendMode?) {
-    NORMAL("Normal", null),
-    MULTIPLY("Multiply", BlendMode.MULTIPLY),
-    SCREEN("Screen", BlendMode.SCREEN),
-    OVERLAY("Overlay", BlendMode.OVERLAY),
-    DARKEN("Darken", BlendMode.DARKEN),
-    LIGHTEN("Lighten", BlendMode.LIGHTEN),
-    COLOR_DODGE("Color Dodge", BlendMode.COLOR_DODGE),
-    COLOR_BURN("Color Burn", BlendMode.COLOR_BURN),
-    HARD_LIGHT("Hard Light", BlendMode.HARD_LIGHT),
-    SOFT_LIGHT("Soft Light", BlendMode.SOFT_LIGHT),
-    DIFFERENCE("Difference", BlendMode.DIFFERENCE),
-    EXCLUSION("Exclusion", BlendMode.EXCLUSION),
-    HUE("Hue", BlendMode.HUE),
-    SATURATION("Saturation", BlendMode.SATURATION),
-    COLOR("Color", BlendMode.COLOR),
-    LUMINOSITY("Luminosity", BlendMode.LUMINOSITY);
+/**
+ * Compositing modes exposed in the layers panel, backed by [android.graphics.BlendMode] (API 29+).
+ *
+ * Two strings per mode, deliberately separate because they have opposite change policies:
+ *  - [label] is DISPLAY text (layers panel). It is free to be reworded or moved to a string
+ *    resource / translated at any time.
+ *  - [wireName] is what `metadata.json` stores, so it is FROZEN. It is the exact English label the
+ *    app has always written (v0.2.x, the device branches and PC exports all share that format), which
+ *    keeps every existing project loading with no schema bump. It is independent of both [label] and
+ *    the enum constant's own name: renaming a constant or relabeling/localizing a mode must not
+ *    reset saved layers to Normal, and the next autosave would then make that loss permanent.
+ *    LayerBlendModeWireNameTest pins every entry to its historical string, so drift fails a test
+ *    instead of silently corrupting projects. Never edit an existing [wireName]; a new mode gets a
+ *    new, never-reused one.
+ */
+enum class LayerBlendMode(val wireName: String, val label: String, val blendMode: BlendMode?) {
+    NORMAL("Normal", "Normal", null),
+    MULTIPLY("Multiply", "Multiply", BlendMode.MULTIPLY),
+    SCREEN("Screen", "Screen", BlendMode.SCREEN),
+    OVERLAY("Overlay", "Overlay", BlendMode.OVERLAY),
+    DARKEN("Darken", "Darken", BlendMode.DARKEN),
+    LIGHTEN("Lighten", "Lighten", BlendMode.LIGHTEN),
+    COLOR_DODGE("Color Dodge", "Color Dodge", BlendMode.COLOR_DODGE),
+    COLOR_BURN("Color Burn", "Color Burn", BlendMode.COLOR_BURN),
+    HARD_LIGHT("Hard Light", "Hard Light", BlendMode.HARD_LIGHT),
+    SOFT_LIGHT("Soft Light", "Soft Light", BlendMode.SOFT_LIGHT),
+    DIFFERENCE("Difference", "Difference", BlendMode.DIFFERENCE),
+    EXCLUSION("Exclusion", "Exclusion", BlendMode.EXCLUSION),
+    HUE("Hue", "Hue", BlendMode.HUE),
+    SATURATION("Saturation", "Saturation", BlendMode.SATURATION),
+    COLOR("Color", "Color", BlendMode.COLOR),
+    LUMINOSITY("Luminosity", "Luminosity", BlendMode.LUMINOSITY);
 
     companion object {
-        fun fromLabel(label: String): LayerBlendMode = entries.firstOrNull { it.label == label } ?: NORMAL
+        /**
+         * The mode persisted as [wireName], or null for a string no mode has ever used (a hand-edit,
+         * a mode added by a newer build). Null rather than a silent NORMAL so the caller can log it;
+         * ProjectRepository falls back to NORMAL there.
+         */
+        fun fromWireName(wireName: String): LayerBlendMode? = entries.firstOrNull { it.wireName == wireName }
     }
 }
 

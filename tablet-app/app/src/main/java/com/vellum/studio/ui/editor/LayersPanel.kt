@@ -63,7 +63,15 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
 @Composable
-fun LayersPanel(engine: CanvasEngine, modifier: Modifier = Modifier, onMessage: (String) -> Unit = {}) {
+fun LayersPanel(
+    engine: CanvasEngine,
+    modifier: Modifier = Modifier,
+    onMessage: (String) -> Unit = {},
+    // Fired only after a delete that actually happened, so the host can offer an "Undo" snackbar.
+    // Delete is one unconfirmed tap next to Add/Duplicate; it is recoverable (undo restores the
+    // layer with its pixels) rather than gated behind a modal, and this is the recovery affordance.
+    onLayerDeleted: () -> Unit = {},
+) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     var importing by remember { mutableStateOf(false) }
@@ -138,7 +146,11 @@ fun LayersPanel(engine: CanvasEngine, modifier: Modifier = Modifier, onMessage: 
                 }
                 IconButton(onClick = { engine.addLayer() }) { Icon(Icons.Filled.Add, contentDescription = "Add layer") }
                 IconButton(onClick = { engine.duplicateActiveLayer() }) { Icon(Icons.Filled.ContentCopy, contentDescription = "Duplicate layer") }
-                IconButton(onClick = { engine.deleteActiveLayer() }) { Icon(Icons.Filled.Delete, contentDescription = "Delete layer") }
+                // Disabled on the last layer (the engine refuses it too) instead of looking live and silently doing nothing.
+                IconButton(
+                    onClick = { if (engine.deleteActiveLayer()) onLayerDeleted() },
+                    enabled = engine.layers.size > 1,
+                ) { Icon(Icons.Filled.Delete, contentDescription = "Delete layer") }
             }
         }
         LazyColumn {
@@ -156,6 +168,7 @@ fun LayersPanel(engine: CanvasEngine, modifier: Modifier = Modifier, onMessage: 
                     onToggleVisible = { engine.setLayerVisible(layer, !layer.visible) },
                     onToggleLocked = { engine.setLayerLocked(layer, !layer.locked) },
                     onOpacityChange = { engine.setLayerOpacity(layer, it) },
+                    onOpacityChangeFinished = { engine.commitLayerPropsEdit() },
                     onBlendModeChange = { engine.setLayerBlendMode(layer, it) },
                     poseGuideShown = engine.poseGuideEnabled && engine.poseGuideLayerId == layer.id,
                     poseGuideLoading = poseDetectingLayerId == layer.id,
@@ -178,6 +191,7 @@ private fun LayerRow(
     onToggleVisible: () -> Unit,
     onToggleLocked: () -> Unit,
     onOpacityChange: (Float) -> Unit,
+    onOpacityChangeFinished: () -> Unit,
     onBlendModeChange: (LayerBlendMode) -> Unit,
     poseGuideShown: Boolean = false,
     poseGuideLoading: Boolean = false,
@@ -256,6 +270,8 @@ private fun LayerRow(
             Slider(
                 value = layer.opacity,
                 onValueChange = onOpacityChange,
+                // One undo step per drag, not one per tick -- see CanvasEngine.setLayerOpacity.
+                onValueChangeFinished = onOpacityChangeFinished,
                 modifier = Modifier.weight(1f),
             )
         }

@@ -6,6 +6,21 @@ import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.intOrNull
 
 /**
+ * A project's metadata.json declares a `schemaVersion` newer than this build understands
+ * ([supportedVersion]). Distinct type (still an [IllegalStateException], as [ProjectSchemaMigrator.migrate]
+ * always threw) so [ProjectRepository] can tell "written by a newer app" apart from "damaged" and REFUSE
+ * instead of recovering: the recovery path rebuilds a lossy project from layer files, and the next save
+ * would then overwrite the newer file's real metadata (names, order, opacity, blend modes) for good.
+ */
+class ProjectTooNewException(val projectVersion: Int, val supportedVersion: Int) : IllegalStateException(
+    "Project metadata is schema version $projectVersion, newer than this app's version $supportedVersion -- refusing to guess how to downgrade it.",
+) {
+    /** Short, user-facing text for a Snackbar or an editor message. */
+    val userMessage: String
+        get() = "This project was made with a newer version of Vellum Studio. Update the app to open it -- this version leaves it untouched."
+}
+
+/**
  * Upgrades a raw, on-disk project [JsonObject] to the current [ProjectMeta] schema, one version
  * step at a time, *before* [ProjectRepository] ever hands it to `Json.decodeFromJsonElement`.
  *
@@ -46,8 +61,9 @@ object ProjectSchemaMigrator {
      * [ProjectMeta.CURRENT_SCHEMA_VERSION] -- purely so this engine can be exercised by a unit test
      * with a synthetic chain, independent of whether a real migration exists yet.
      *
-     * @throws IllegalStateException if [json]'s version is newer than [targetVersion] (a project
-     *   saved by a newer build of the app being opened by an older one), or if [steps] has a gap.
+     * @throws ProjectTooNewException (an [IllegalStateException]) if [json]'s version is newer than
+     *   [targetVersion] (a project saved by a newer build of the app being opened by an older one).
+     * @throws IllegalStateException if [steps] has a gap.
      */
     fun migrate(
         json: JsonObject,
@@ -56,9 +72,7 @@ object ProjectSchemaMigrator {
     ): JsonObject {
         var current = json
         var version = versionOf(json)
-        check(version <= targetVersion) {
-            "Project metadata is schema version $version, newer than this app's version $targetVersion -- refusing to guess how to downgrade it."
-        }
+        if (version > targetVersion) throw ProjectTooNewException(version, targetVersion)
         while (version < targetVersion) {
             val step = steps.getOrNull(version - 1)
                 ?: error("No migration registered to upgrade project schema from version $version to ${version + 1}")

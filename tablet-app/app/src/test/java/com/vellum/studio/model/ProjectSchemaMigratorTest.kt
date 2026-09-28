@@ -8,6 +8,7 @@ import kotlinx.serialization.json.decodeFromJsonElement
 import kotlinx.serialization.json.int
 import kotlinx.serialization.json.jsonObject
 import org.junit.Assert.assertEquals
+import org.junit.Assert.fail
 import org.junit.Test
 
 /**
@@ -90,6 +91,33 @@ class ProjectSchemaMigratorTest {
     fun `a blob newer than the target version is refused rather than silently misread`() {
         val fromTheFuture = buildJsonObject { put("schemaVersion", JsonPrimitive(99)) }
         ProjectSchemaMigrator.migrate(fromTheFuture, targetVersion = 1, steps = emptyList())
+    }
+
+    @Test
+    fun `the refusal is a typed exception carrying both versions so the repository can tell newer from damaged`() {
+        val fromTheFuture = buildJsonObject { put("schemaVersion", JsonPrimitive(99)) }
+        try {
+            ProjectSchemaMigrator.migrate(fromTheFuture, targetVersion = 1, steps = emptyList())
+            fail("expected a refusal")
+        } catch (e: ProjectTooNewException) {
+            assertEquals(99, e.projectVersion)
+            assertEquals(1, e.supportedVersion)
+        }
+    }
+
+    @Test
+    fun `the production chain refuses a version-99 blob and leaves the input object untouched`() {
+        val fromTheFuture = buildJsonObject {
+            put("schemaVersion", JsonPrimitive(99))
+            put("id", JsonPrimitive("keep-me"))
+        }
+        val snapshot = fromTheFuture.toString()
+        try {
+            ProjectSchemaMigrator.migrate(fromTheFuture) // default steps + CURRENT_SCHEMA_VERSION, as ProjectRepository calls it
+            fail("expected a refusal")
+        } catch (_: ProjectTooNewException) {
+        }
+        assertEquals(snapshot, fromTheFuture.toString())
     }
 
     @Test(expected = IllegalStateException::class)

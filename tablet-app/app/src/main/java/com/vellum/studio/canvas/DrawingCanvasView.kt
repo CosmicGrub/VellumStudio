@@ -15,7 +15,9 @@ import android.view.MotionEvent
 import android.view.View
 import com.vellum.studio.VellumApp
 import kotlin.math.PI
+import kotlin.math.abs
 import kotlin.math.atan2
+import kotlin.math.ceil
 import kotlin.math.floor
 import kotlin.math.hypot
 
@@ -81,7 +83,6 @@ class DrawingCanvasView @JvmOverloads constructor(
         blendMode = BlendMode.MULTIPLY
     }
     private val layerPaint = Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG)
-    private val scratchPreviewPaint = Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG)
     private val borderPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.STROKE; color = 0x33FFFFFF }
     private val numberLabelPaint = Paint(Paint.ANTI_ALIAS_FLAG)
     private val numberLabelTextPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
@@ -193,12 +194,10 @@ class DrawingCanvasView @JvmOverloads constructor(
     private var canvasX = 0f
     private var canvasY = 0f
 
-    // The most recent stroke-dirty region in canvas space, reused as saveLayer's bounds in onDraw()
-    // (see there) instead of the full canvas - saveLayer is one of the most expensive Canvas
-    // operations, and a fast eraser/Pastel drag can trigger it dozens of times a second; bounding it
-    // to only what actually changed keeps that cost proportional to the stroke instead of the canvas.
-    private val strokeDirtyBoundsCanvasSpace = RectF()
-    private var hasStrokeDirtyBounds = false
+    // Owns the live-preview compositing for a scratch-routed stroke, including the CUMULATIVE
+    // (whole-stroke, canvas-space) bounds of everything stamped so far -- see StrokePreviewCompositor
+    // for why that is cumulative rather than the per-frame dirty union this view used to keep here.
+    private val strokePreviewCompositor = StrokePreviewCompositor()
 
     // --- finger navigation state ---
     private val navPointerIds = mutableListOf<Int>()
@@ -306,68 +305,19 @@ class DrawingCanvasView @JvmOverloads constructor(
                     previewBrush?.pigmentMixing == true -> BlendMode.MULTIPLY
                     else -> null
                 }
-                if (previewBlendMode != null) {
-                    // DST_OUT/MULTIPLY previews need a genuinely alpha-aware destination to
-                    // composite against - the View's own hardware-accelerated canvas doesn't
-                    // reliably provide one. This is a classic Android drawing-app gotcha: punching
-                    // "transparency" via DST_OUT straight onto a View's onDraw() canvas can render
-                    // as black garbage instead of revealing what was drawn earlier in the same pass,
-                    // because the real display surface behind it has no meaningful translucency of
-                    // its own to reveal. The actual stroke-commit path never hits this - it composites
-                    // onto Canvas(layer.bitmap), a real software ARGB_8888 bitmap, where the alpha
-                    // math is well-defined - which is exactly why the eraser looked broken only
-                    // while dragging and "fixed itself" the instant the stroke committed on lift.
-                    // saveLayer() gives Skia a temporary, properly alpha-aware offscreen buffer for
-                    // just this one layer + its scratch overlay, which then composites back onto the
-                    // real canvas normally - so an erased area correctly reveals the white
-                    // background/earlier layers already painted below it, in real time.
-                    //
-                    // Bounds: saveLayer is one of the most expensive Canvas ops there is, and a fast
-                    // drag can trigger this branch dozens of times a second - allocating (and
-                    // compositing) a full-canvas-sized offscreen buffer on every one of those frames
-                    // risks dropping frames badly enough that the screen visibly lags behind the real
-                    // stroke, which reads exactly like "nothing erases while I drag" even though the
-                    // compositing math itself is correct. Bounding saveLayer to only the region this
-                    // frame's dab(s) actually touched (already computed for the dirty-rect invalidate
-                    // below) keeps its cost proportional to the stroke instead of the canvas size.
-                    val bounds = if (hasStrokeDirtyBounds) {
-                        // A little padding so the saveLayer bounds don't clip a dab's soft-falloff
-                        // edge right at the boundary; reset right after consuming so accumulation
-                        // (see invalidateDirty) starts clean for whatever happens before the next frame.
-                        strokeDirtyBoundsCanvasSpace.inset(-4f, -4f)
-                        hasStrokeDirtyBounds = false
-                        strokeDirtyBoundsCanvasSpace
-                    } else {
-                        // Deliberately NOT reusing a stale small rect here: this redraw could just as
-                        // well have been triggered by something that changes the WHOLE layer's
-                        // appearance (its opacity or blend mode, dragged from the Layers panel while
-                        // this stroke happens to be paused) rather than new stroke content - reusing
-                        // last frame's small dab-sized bounds in that case would only re-composite a
-                        // tiny corner correctly and leave the rest of the layer showing stale opacity
-                        // for as long as the pause lasts. Falling back to the full canvas costs more
-                        // in that narrow situation, but it's the only choice that's always correct.
-                        fullCanvasBounds(eng)
-                    }
-                    // layerPaint (alpha=layer.opacity, blendMode=layer.blendMode) is passed as
-                    // saveLayer's own paint, not used inside the offscreen buffer - it's applied once,
-                    // here, when the finished offscreen composites back onto the REAL destination,
-                    // which is where a non-Normal layer blend mode has real content to blend against.
-                    val saveCount = canvas.saveLayer(bounds, layerPaint)
-                    // layer.bitmap goes in PLAIN (no blend mode, no alpha) here - the offscreen buffer
-                    // starts fully transparent, so evaluating the layer's own blend mode against that
-                    // empty backdrop would degrade it to plain unblended painting (see saveLayer's
-                    // paint argument above for where that blend mode actually belongs instead).
-                    canvas.drawBitmap(layer.bitmap, 0f, 0f, null)
-                    scratchPreviewPaint.alpha = (cap.coerceIn(0f, 1f) * 255).toInt()
-                    scratchPreviewPaint.blendMode = previewBlendMode
-                    canvas.drawBitmap(eng.strokeScratch, 0f, 0f, scratchPreviewPaint)
-                    canvas.restoreToCount(saveCount)
-                } else {
-                    canvas.drawBitmap(layer.bitmap, 0f, 0f, layerPaint)
-                    scratchPreviewPaint.alpha = (layer.opacity.coerceIn(0f, 1f) * cap.coerceIn(0f, 1f) * 255).toInt()
-                    scratchPreviewPaint.blendMode = null
-                    canvas.drawBitmap(eng.strokeScratch, 0f, 0f, scratchPreviewPaint)
-                }
+                // All of the live-preview compositing (why it needs an offscreen buffer for
+                // DST_OUT/MULTIPLY strokes AND for any non-Normal layer blend mode, and why that
+                // buffer is bounded by the CUMULATIVE stroke bounds with everything outside them
+                // drawn plainly) lives in StrokePreviewCompositor -- see its doc. It's a separate
+                // class in this file, taking a Canvas, purely so a Robolectric NATIVE test can run the
+                // exact same code against a real Skia bitmap without needing this View's app wiring.
+                //
+                // Pad in canvas units, grown when zoomed out so it stays >= ~4 device px (a canvas
+                // unit is < 1 device px there), capped so an extreme zoom-out can't balloon it.
+                val boundsPad = PREVIEW_BOUNDS_PAD_PX / currentScale().coerceIn(0.25f, 1f)
+                strokePreviewCompositor.drawLayerWithScratch(
+                    canvas, layer.bitmap, eng.strokeScratch, layerPaint, previewBlendMode, cap, boundsPad,
+                )
             } else {
                 canvas.drawBitmap(layer.bitmap, 0f, 0f, layerPaint)
             }
@@ -388,9 +338,14 @@ class DrawingCanvasView @JvmOverloads constructor(
             eng.poseGuide?.let { drawPoseGuide(canvas, it) }
         }
 
-        eng.selectionRect?.let { rect ->
-            selectionPaint.strokeWidth = 2f / currentScale()
-            canvas.drawRect(rect, selectionPaint)
+        // SELECT only: the marquee used to draw in every tool and read as an active clip region
+        // while brushing (brush strokes never consult it). CanvasEngine.currentTool also clears
+        // the rect on leaving SELECT; this gate is the draw-side half so a stale one can't show.
+        if (eng.currentTool == ToolMode.SELECT) {
+            eng.selectionRect?.let { rect ->
+                selectionPaint.strokeWidth = 2f / currentScale()
+                canvas.drawRect(rect, selectionPaint)
+            }
         }
 
         // Hidden the instant a real stroke owns input (strokePointerId != -1) -- once ink is
@@ -484,45 +439,20 @@ class DrawingCanvasView @JvmOverloads constructor(
         canvas.restore()
     }
 
-    private val fullCanvasBoundsRect = RectF()
-
-    /**
-     * Safety-net fallback for onDraw()'s saveLayer bounds (see there) when no stroke dirty rect is
-     * available yet. Not reachable in practice today - startStroke() always runs renderer.start()
-     * (which touches the dirty-bounds tracking) synchronously before invalidateDirty(), and Android
-     * dispatches input/draws serially on the UI thread, so hasStrokeDirtyBounds is guaranteed true by
-     * the time any onDraw() for that stroke's previewLayer branch can run. Kept anyway as a genuine
-     * safety net: if a future refactor ever reorders those calls, this is what stands between that
-     * regression and silently reintroducing the exact full-canvas-every-frame cost this fix removed.
-     */
-    private fun fullCanvasBounds(eng: CanvasEngine): RectF {
-        fullCanvasBoundsRect.set(0f, 0f, eng.widthPx.toFloat(), eng.heightPx.toFloat())
-        return fullCanvasBoundsRect
-    }
-
     private fun invalidateDirty(canvasSpaceRect: RectF) {
-        // Accumulates (unions) across every call since onDraw() last actually consumed it, not just
-        // the latest one - a fast S Pen can generate several ACTION_MOVE events (each calling this)
-        // between two real rendered frames, the same way Android's own invalidate(rect) coalesces
-        // multiple calls into one combined dirty region for the next draw pass. Overwriting instead
-        // of unioning here would mean saveLayer's bounds (see onDraw) only covered the LAST of those
-        // calls' small delta, silently leaving earlier dabs from the same unrendered gap uncomposited
-        // in the eventual frame.
-        if (hasStrokeDirtyBounds) {
-            strokeDirtyBoundsCanvasSpace.union(canvasSpaceRect)
-        } else {
-            strokeDirtyBoundsCanvasSpace.set(canvasSpaceRect)
-            hasStrokeDirtyBounds = true
-        }
+        // Unioned into the stroke's CUMULATIVE bounds (never reset between frames, only at stroke
+        // start/cleanup) -- see StrokePreviewCompositor. This used to keep a per-frame dirty union
+        // that onDraw consumed and reset, which is what made the preview's saveLayer clip the rest
+        // of the layer away.
+        strokePreviewCompositor.noteDirty(canvasSpaceRect)
 
         // This used to map canvasSpaceRect into view space and call the deprecated four-arg
         // invalidate(l, t, r, b) with it. Per View.invalidate(int,int,int,int)'s own
         // deprecation note, the framework has ignored that rect since API 21 in favor of an
         // internally-calculated dirty area, and minSdk here is 29 -- so on every API level
-        // this app supports, that call was already 100% equivalent to plain invalidate().
-        // The real perf-scoping (bounding the expensive saveLayer to just the dirty region)
-        // happens in onDraw() via strokeDirtyBoundsCanvasSpace, which this method still
-        // populates above and is untouched by this change.
+        // this app supports, that call was already 100% equivalent to plain invalidate(): the
+        // whole view is damaged and redrawn every frame, which is exactly why onDraw() must draw
+        // the ENTIRE target layer every frame rather than assume earlier pixels persist.
         invalidate()
     }
 
@@ -752,7 +682,17 @@ class DrawingCanvasView @JvmOverloads constructor(
             return
         }
         if (wasMoving && originalRect != null) {
-            commitSelectionMove(eng, originalRect, rect)
+            // A tap inside the rect is a zero-distance "move". Committing it would snapshot the
+            // whole layer twice and burn an undo slot for a no-op (depth can be as low as 6, so a
+            // handful of stray taps evicted the real history). Keep the rect exactly where it was
+            // (not the sub-pixel-drifted copy) and push nothing.
+            if (abs(rect.left - originalRect.left) < SELECTION_MOVE_EPSILON_PX &&
+                abs(rect.top - originalRect.top) < SELECTION_MOVE_EPSILON_PX
+            ) {
+                eng.selectionRect = originalRect
+            } else {
+                commitSelectionMove(eng, originalRect, rect)
+            }
         }
         invalidate()
     }
@@ -822,6 +762,7 @@ class DrawingCanvasView @JvmOverloads constructor(
         val renderer = StrokeRenderer(brush, eng.currentColorArgb, eng.brushSizeMultiplier, eng.brushOpacityMultiplier)
         strokeRenderer = renderer
         strokeTargetLayer = layer
+        strokePreviewCompositor.beginStroke()
 
         // Checked once, here, rather than on every sample below -- see the field's own doc
         // comment for why an Assist-off stroke never touches any of this.
@@ -1041,7 +982,7 @@ class DrawingCanvasView @JvmOverloads constructor(
         strokeTargetLayer = null
         pendingStroke = null
         navBaselineSet = false
-        hasStrokeDirtyBounds = false
+        strokePreviewCompositor.beginStroke()
         mirrorRenderers = emptyList()
         // Deliberately NOT clearing pendingShapeAssist here -- see its own field doc comment for
         // why it needs to outlive this cleanup (a Snackbar offering it is shown right after this
@@ -1140,11 +1081,150 @@ class DrawingCanvasView @JvmOverloads constructor(
         private const val MIN_ZOOM = 0.05f
         private const val MAX_ZOOM = 40f
 
+        // Canvas px below which a selection "move" counts as a tap (see endSelectionGesture).
+        // Half a pixel: a real drag at any zoom moves at least a whole canvas pixel, while stylus
+        // jitter on a tap stays far under it.
+        private const val SELECTION_MOVE_EPSILON_PX = 0.5f
+
+        // Base padding (canvas units) around the cumulative stroke bounds in the live preview, so a
+        // dab's soft falloff edge and bilinear filtering don't get cut right at the seam.
+        private const val PREVIEW_BOUNDS_PAD_PX = 4f
+
         // Safety cap on Smart Shape Assist's parallel point capture (see shapeAssistPoints) -- a
         // very long, slow drag shouldn't grow this list unboundedly. Recognition doesn't need
         // every sample past this many anyway (ShapeAssist.recognize's Douglas-Peucker simplifies
         // heavily regardless); this only stops capturing further points, it never affects the
         // actual dab rendering path above.
         private const val MAX_SHAPE_ASSIST_POINTS = 3000
+    }
+}
+
+/**
+ * Draws the stroke's target layer plus its live scratch overlay for [DrawingCanvasView.onDraw], so
+ * what the user sees mid-stroke matches what pen-up will commit. Split out of the View (taking a
+ * plain [Canvas]) so a Robolectric `@GraphicsMode(NATIVE)` test can run the exact production code
+ * against a real Skia bitmap -- the View itself can't be drawn in a JVM test because onDraw() reaches
+ * into the app singleton for paper-texture settings.
+ *
+ * What commit does (CanvasEngine.flattenScratchOnto + the plain layer draw): the scratch is baked
+ * into the layer bitmap (SRC_OVER at the stroke's opacity cap, DST_OUT for erasers, MULTIPLY for
+ * pigment mixing) with NO layer opacity/blend involved, and only THEN is the finished layer composited
+ * with its opacity and blend mode. The preview reproduces that order with an offscreen buffer:
+ * layer + scratch in the buffer, layer opacity/blend applied once when the buffer is restored.
+ *
+ * Three defects this replaces (both were in onDraw, neither in the frozen dab loop):
+ *  1. The offscreen buffer used to be bounded by only the LAST frame's dirty union and was the ONLY
+ *     place layer.bitmap got drawn. saveLayer clips to its bounds, and (see invalidateDirty) every
+ *     frame damages and redraws the whole view, so an eraser/Pastel drag drew the layer only in a
+ *     small moving rectangle -- the rest of the layer blinked away, as did the eraser marks laid down
+ *     earlier in the same stroke. Now the bounds are the CUMULATIVE stroke bounds: outside them the
+ *     scratch is provably empty, so the layer is drawn plainly there (clipOutRect) and is exactly
+ *     right, while the offscreen buffer only covers the region the stroke has actually touched. Cost
+ *     therefore grows with the stroke rather than with the canvas, and a mid-stroke Layers-panel
+ *     opacity/blend change is always reflected because the plain path reads layerPaint every frame.
+ *  2. A non-Normal layer blend mode used to take the plain path, which blends the layer but then
+ *     draws the scratch Normal on top -- ink on a Multiply/Screen layer looked wrong until pen-up.
+ *     Any non-Normal layer blend now takes the offscreen path too.
+ *  3. Same shape at layer opacity below 100%: the plain path attenuated the ink and the layer
+ *     content beneath it separately instead of the merged layer once, so ink over existing content
+ *     on a dimmed layer looked different until pen-up. Also routed offscreen now.
+ *
+ * Seam note: the plain region and the offscreen region use the SAME integer-aligned rect (clipped
+ * out of one, saveLayer'd for the other), so they tile without overlap. That is exact on
+ * axis-aligned views; on a rotated view the two clip edges are each anti-aliased independently, so a
+ * faint seam along the rotated bounds edge is possible -- not checkable without hardware.
+ */
+internal class StrokePreviewCompositor {
+    private val strokeBounds = RectF()
+    private var hasStrokeBounds = false
+    private val regionRect = RectF()
+
+    // Deliberately its own Paint (never the view's layerPaint): drawn with FILTER_BITMAP so the
+    // layer inside the offscreen buffer is sampled with the same bilinear filtering as the plain
+    // draw outside it -- with a null paint the two halves would visibly differ when zoomed.
+    private val scratchPaint = Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG)
+
+    /** Clears the cumulative bounds. Call at stroke start and again at cleanup. */
+    fun beginStroke() {
+        strokeBounds.setEmpty()
+        hasStrokeBounds = false
+    }
+
+    /** Unions [canvasSpaceRect] (a dab's dirty rect, in canvas pixels) into the stroke's bounds. */
+    fun noteDirty(canvasSpaceRect: RectF) {
+        if (hasStrokeBounds) {
+            strokeBounds.union(canvasSpaceRect)
+        } else {
+            strokeBounds.set(canvasSpaceRect)
+            hasStrokeBounds = true
+        }
+    }
+
+    /**
+     * @param layerPaint already carries the layer's opacity (alpha) and blend mode -- a non-null
+     *   `layerPaint.blendMode`, or an alpha below 255, is what routes a layer to the offscreen path.
+     * @param scratchBlendMode DST_OUT (eraser), MULTIPLY (pigment mixing) or null (plain ink).
+     * @param cap the brush's stroke-level opacity cap.
+     * @param pad canvas-unit padding around the cumulative bounds (soft dab edges, filtering).
+     */
+    fun drawLayerWithScratch(
+        canvas: Canvas,
+        layerBitmap: Bitmap,
+        scratch: Bitmap,
+        layerPaint: Paint,
+        scratchBlendMode: BlendMode?,
+        cap: Float,
+        pad: Float,
+    ) {
+        val capClamped = cap.coerceIn(0f, 1f)
+        if (scratchBlendMode == null && layerPaint.blendMode == null && layerPaint.alpha == 255) {
+            // Normal ink on a Normal, fully opaque layer: no offscreen buffer needed. Layer and scratch
+            // both go straight to the destination SRC_OVER, which is associative with the commit's
+            // scratch-into-layer-then-layer-onto-destination order, so this is already exact. It is
+            // NOT exact below full layer opacity (the ink would be attenuated by the layer opacity
+            // separately from the layer content under it, instead of the merged layer once), which is
+            // why that case takes the offscreen path too.
+            canvas.drawBitmap(layerBitmap, 0f, 0f, layerPaint)
+            scratchPaint.alpha = (capClamped * 255).toInt()
+            scratchPaint.blendMode = null
+            canvas.drawBitmap(scratch, 0f, 0f, scratchPaint)
+            return
+        }
+
+        val canvasW = layerBitmap.width.toFloat()
+        val canvasH = layerBitmap.height.toFloat()
+        if (hasStrokeBounds) {
+            regionRect.set(strokeBounds)
+            regionRect.inset(-pad, -pad)
+            regionRect.set(floor(regionRect.left), floor(regionRect.top), ceil(regionRect.right), ceil(regionRect.bottom))
+            if (!regionRect.intersect(0f, 0f, canvasW, canvasH)) {
+                // The whole stroke so far is off-canvas: scratch is empty, plain layer is exact.
+                canvas.drawBitmap(layerBitmap, 0f, 0f, layerPaint)
+                return
+            }
+            canvas.save()
+            canvas.clipOutRect(regionRect)
+            canvas.drawBitmap(layerBitmap, 0f, 0f, layerPaint)
+            canvas.restore()
+        } else {
+            // No stroke bounds yet (not reachable today -- startStroke always stamps and notes a dirty
+            // rect before any draw -- but a reordering refactor must degrade to correct, not to blank).
+            regionRect.set(0f, 0f, canvasW, canvasH)
+        }
+
+        // layerPaint is saveLayer's OWN paint, not used inside the buffer: it is applied once, when
+        // the finished buffer composites onto the real destination, which is where a non-Normal
+        // blend mode has actual content to blend against (against the buffer's empty backdrop it
+        // would degrade to plain painting). The DST_OUT/MULTIPLY scratch draw likewise needs the
+        // buffer's real alpha channel -- the View's own canvas doesn't reliably provide one, which
+        // is the classic "eraser renders black while dragging" gotcha.
+        val saveCount = canvas.saveLayer(regionRect, layerPaint)
+        scratchPaint.alpha = 255
+        scratchPaint.blendMode = null
+        canvas.drawBitmap(layerBitmap, 0f, 0f, scratchPaint)
+        scratchPaint.alpha = (capClamped * 255).toInt()
+        scratchPaint.blendMode = scratchBlendMode
+        canvas.drawBitmap(scratch, 0f, 0f, scratchPaint)
+        canvas.restoreToCount(saveCount)
     }
 }

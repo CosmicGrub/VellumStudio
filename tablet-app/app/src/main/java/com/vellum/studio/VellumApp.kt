@@ -8,14 +8,24 @@ import com.vellum.studio.model.ProjectRepository
 import com.vellum.studio.model.SettingsRepository
 import com.vellum.studio.model.UserPhotoTemplateRepository
 import com.vellum.studio.util.DiagnosticLog
+import com.vellum.studio.util.RecoveryNotices
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.launch
 
 class VellumApp : Application() {
-    val repository: ProjectRepository by lazy { ProjectRepository(this) }
-    val paletteRepository: PaletteRepository by lazy { PaletteRepository(this) }
-    val academyProgressRepository: AcademyProgressRepository by lazy { AcademyProgressRepository(this) }
+    // Kept as a named Lazy so onTrimMemory can ask "was it ever created" without creating it.
+    private val repositoryDelegate = lazy { ProjectRepository(this) }
+    val repository: ProjectRepository by repositoryDelegate
+    // User-data files (brushes, palettes, My Photos index, Academy progress) that turned out damaged and
+    // were set aside; shown by the same app-level host as save failures (see SaveFailureHost).
+    val recoveryNotices = RecoveryNotices()
+    val paletteRepository: PaletteRepository by lazy { PaletteRepository(this, recoveryNotices) }
+    val academyProgressRepository: AcademyProgressRepository by lazy { AcademyProgressRepository(this, recoveryNotices) }
     val settingsRepository: SettingsRepository by lazy { SettingsRepository(this) }
-    val customBrushRepository: CustomBrushRepository by lazy { CustomBrushRepository(this) }
-    val userPhotoTemplateRepository: UserPhotoTemplateRepository by lazy { UserPhotoTemplateRepository(this) }
+    val customBrushRepository: CustomBrushRepository by lazy { CustomBrushRepository(this, recoveryNotices) }
+    val userPhotoTemplateRepository: UserPhotoTemplateRepository by lazy { UserPhotoTemplateRepository(this, recoveryNotices) }
 
     override fun onCreate() {
         super.onCreate()
@@ -25,6 +35,26 @@ class VellumApp : Application() {
         // here) is captured too.
         DiagnosticLog.install(this)
         DiagnosticLog.log(this, "Lifecycle", "App started (${DiagnosticLog.deviceBanner()})")
+        // Recently deleted keeps a project for ProjectRepository.TRASH_RETENTION_MS (30 days); this is
+        // where older ones are finally removed. Off the main thread (it lists and deletes folders),
+        // best-effort (an unpurged entry is simply retried next launch), and it creates nothing when
+        // there is no trash. Process-lifetime scope: there is nothing to cancel it for.
+        CoroutineScope(SupervisorJob() + Dispatchers.IO).launch {
+            runCatching { repository.purgeExpiredTrash() }
+                .onFailure { DiagnosticLog.log(this@VellumApp, "Lifecycle", "Trash purge failed: ${it.javaClass.simpleName}: ${it.message}") }
+        }
+    }
+
+    /**
+     * Process-wide memory-pressure callback. UI_HIDDEN (and everything above it) means no UI of ours
+     * is visible any more, i.e. the process just became a kill candidate: any editor with unsaved
+     * changes flushes NOW rather than hoping the debounce beats lmkd. The editor's own ON_STOP flush
+     * normally got there first, in which case this is free (dirty flag). Deliberately does not touch
+     * [repository] if nothing ever created it -- an editor cannot be open without it.
+     */
+    override fun onTrimMemory(level: Int) {
+        super.onTrimMemory(level)
+        if (repositoryDelegate.isInitialized()) repository.onTrimMemory(level)
     }
 
     companion object {

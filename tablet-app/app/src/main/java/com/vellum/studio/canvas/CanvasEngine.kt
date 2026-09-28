@@ -31,7 +31,19 @@ enum class ToolMode { BRUSH, FILL, PAINT_BY_NUMBER, SELECT }
 class CanvasEngine(val widthPx: Int, val heightPx: Int) {
 
     val layers: SnapshotStateList<Layer> = mutableListOf<Layer>().toMutableStateList()
-    var activeLayerIndex by mutableIntStateOf(0)
+
+    // Private backing state + explicit accessors (not `by mutableIntStateOf` with a custom set):
+    // a delegated var can't carry a setter that touches a backing field, see SettingsRepository.
+    // Any real change of the active layer drops the marquee -- selectionRect is a region on ONE
+    // layer's pixels, and a later drag would otherwise commit against whichever layer happens to be
+    // active by then (the stale-marquee-on-the-wrong-layer defect this guards).
+    private val activeLayerIndexState = mutableIntStateOf(0)
+    var activeLayerIndex: Int
+        get() = activeLayerIndexState.intValue
+        set(value) {
+            if (value != activeLayerIndexState.intValue) selectionRect = null
+            activeLayerIndexState.intValue = value
+        }
 
     var currentBrush by mutableStateOf(BrushPresets.Pencil)
     var currentColorArgb by mutableIntStateOf(Color.BLACK)
@@ -54,7 +66,16 @@ class CanvasEngine(val widthPx: Int, val heightPx: Int) {
         get() = opacityMultipliers[currentBrush.id] ?: 1f
         set(value) { opacityMultipliers[currentBrush.id] = value }
 
-    var currentTool by mutableStateOf(ToolMode.BRUSH)
+    // Same private-backing-state pattern as activeLayerIndex above. Leaving SELECT drops the
+    // marquee: it is only drawn/meaningful in SELECT, and a lingering one read as an active clip
+    // region while drawing with the brush (it never was one -- brush strokes ignore it).
+    private val currentToolState = mutableStateOf(ToolMode.BRUSH)
+    var currentTool: ToolMode
+        get() = currentToolState.value
+        set(value) {
+            if (value != ToolMode.SELECT) selectionRect = null
+            currentToolState.value = value
+        }
 
     /** See [SymmetryMode] -- while not NONE, DrawingCanvasView stamps every dab at its mirrored/
      * rotated position(s) too, live, alongside the real stroke. */
@@ -90,6 +111,12 @@ class CanvasEngine(val widthPx: Int, val heightPx: Int) {
      */
     var selectionRect by mutableStateOf<RectF?>(null)
 
+    /** Explicit Deselect (the tool menu's action) -- before this the only way to drop a selection
+     * was a stylus tap outside it, which also starts defining a new one. */
+    fun deselect() {
+        selectionRect = null
+    }
+
     /**
      * Cached region map for paint-by-number mode; recomputed lazily, see [regionsForPaintByNumber].
      * Keyed on (active layer, [revision]) rather than just the active layer index - [revision] is
@@ -103,19 +130,57 @@ class CanvasEngine(val widthPx: Int, val heightPx: Int) {
     private var regionMapLayerIndex = -1
     private var regionMapRevision = -1
 
-    // Each undo step owns two full-canvas ARGB_8888 bitmaps (before + after); cap total history
-    // memory rather than a fixed step count so large canvases don't blow the heap.
-    val undoManager = UndoManager(maxDepth = computeUndoDepth())
+    // History is bounded by BYTES, not step count (see UndoManager): a pixel step pins two
+    // full-canvas ARGB_8888 bitmaps, a deleted-layer step one, property/move steps almost nothing.
+    // Device-scaled budget (was a flat 180MB regardless of hardware) -- see
+    // DeviceCapabilities.undoBudgetBytes() for why: a higher-RAM device earns real extra undo depth
+    // instead of the same fixed ceiling as a much more constrained one. The 6..60 step clamp is the
+    // old depth clamp: never fewer than 6 undoable steps even on a giant canvas, never more than 60.
+    val undoManager = UndoManager(
+        maxDepth = MAX_UNDO_STEPS,
+        budgetBytes = DeviceCapabilities.undoBudgetBytes(),
+        minKeptSteps = MIN_UNDO_STEPS,
+        host = LayerStackHostImpl(),
+    )
 
-    private fun computeUndoDepth(): Int {
-        val bytesPerBitmap = widthPx.toLong() * heightPx.toLong() * 4L
-        if (bytesPerBitmap <= 0L) return 6
-        // Device-scaled budget (was a flat 180MB regardless of hardware) -- see
-        // DeviceCapabilities.undoBudgetBytes() for why: a higher-RAM device earns real extra
-        // undo depth instead of the same fixed ceiling as a much more constrained one.
-        val budgetBytes = DeviceCapabilities.undoBudgetBytes()
-        val depth = (budgetBytes / (bytesPerBitmap * 2)).toInt()
-        return depth.coerceIn(6, 60)
+    /**
+     * The engine's half of structural undo (see [LayerStackHost]): re-attach / detach / reorder
+     * layers on behalf of a history step. Detaching never recycles -- the step owns the bitmap now.
+     */
+    private inner class LayerStackHostImpl : LayerStackHost {
+        override fun attachLayer(layer: Layer, index: Int) {
+            layers.add(index.coerceIn(0, layers.size), layer)
+        }
+
+        override fun detachLayer(layer: Layer) {
+            layers.remove(layer)
+            clearPoseGuideIfOn(layer)
+        }
+
+        override fun moveLayerTo(layer: Layer, index: Int) {
+            if (!layers.remove(layer)) return
+            layers.add(index.coerceIn(0, layers.size), layer)
+        }
+
+        override fun setActiveLayerIndex(index: Int) {
+            activeLayerIndex = index.coerceIn(0, (layers.size - 1).coerceAtLeast(0))
+        }
+    }
+
+    /**
+     * Degrade gracefully rather than leaving a dangling pointer: if [layer] is the one the current
+     * pose guide was computed against, there's nothing left for that overlay to sit on top of --
+     * clear it the same way "no reference image present" leaves the pose toggle simply unavailable,
+     * instead of a stale skeleton floating over whatever's now underneath it. (Undoing the delete
+     * brings the layer back but not the guide; re-running detection is one tap.)
+     */
+    private fun clearPoseGuideIfOn(layer: Layer) {
+        if (layer.id == poseGuideLayerId) {
+            poseGuide = null
+            poseGuideLayerId = null
+            poseGuideEnabled = false
+            poseGuideContentVersion = -1
+        }
     }
 
     /**
@@ -138,6 +203,45 @@ class CanvasEngine(val widthPx: Int, val heightPx: Int) {
         private set
 
     fun activeLayer(): Layer? = layers.getOrNull(activeLayerIndex)
+
+    /**
+     * Undo/redo the top history step. Ignored (returns false, history untouched) while a stylus
+     * stroke is in flight: [UndoManager] restores bitmaps straight onto the live layer, which is the
+     * very bitmap the stroke is still drawing into. For scratch-based brushes that made the stroke's
+     * commit snapshot (its "before") still contain the previous stroke, so undoing it later
+     * resurrected that stroke; for buildUp brushes the restore wiped the in-flight dabs. A second
+     * pointer (a finger on the top-bar button, or Ctrl+Z from a Bluetooth keyboard) can reach this
+     * mid-stroke -- stylus-only palm rejection only covers touches that hit DrawingCanvasView --
+     * hence the same guard delete/move/print/export carry, at the engine so every caller gets it.
+     * That guard covers STRUCTURAL steps too (re-inserting a deleted layer, reordering) -- they
+     * would shift the stack under the live stroke's layer reference. Undo/redo of a delete, add or
+     * move also lands the active layer where it was, and the whole of it bumps [revision] so
+     * autosave sees the restored structure. The bump lives HERE, next to the pixel swap, rather than
+     * in whichever screen calls it: [revision] is what the editor's autosave watches
+     * (EditorAutosaver), and [UndoManager.undo] alone only changes the layer's contentVersion, so a
+     * caller that forgot the bump would leave an undo -- which rewrites pixels -- unsaved until some
+     * unrelated later edit.
+     * Also drops the marquee: it describes pixels that just moved back.
+     */
+    fun undo(): Boolean {
+        // Close an unfinished property gesture first so the step it represents is what gets undone.
+        undoManager.endLayerPropsEdit()
+        if (strokeInProgressLayerId != null || !undoManager.canUndo) return false
+        undoManager.undo { id -> layers.firstOrNull { it.id == id } }
+        selectionRect = null
+        bumpRevision()
+        return true
+    }
+
+    /** See [undo] -- identical guard and side effects for the redo direction. */
+    fun redo(): Boolean {
+        undoManager.endLayerPropsEdit()
+        if (strokeInProgressLayerId != null || !undoManager.canRedo) return false
+        undoManager.redo { id -> layers.firstOrNull { it.id == id } }
+        selectionRect = null
+        bumpRevision()
+        return true
+    }
 
     fun addLayer(name: String? = null, aboveActive: Boolean = true): Layer {
         val bmp = Bitmap.createBitmap(widthPx, heightPx, Bitmap.Config.ARGB_8888)
@@ -167,6 +271,11 @@ class CanvasEngine(val widthPx: Int, val heightPx: Int) {
     private fun insertLayer(layer: Layer, aboveActive: Boolean): Layer {
         val insertAt = if (layers.isEmpty()) 0 else (activeLayerIndex + if (aboveActive) 1 else 0)
         val clampedInsertAt = insertAt.coerceIn(0, layers.size)
+        val activeBefore = activeLayerIndex
+        // The very first layer of a project (project creation / open-with-no-layers) is not an edit
+        // -- undoing it would leave a canvas with no layers -- so only inserts into an existing
+        // stack become history steps.
+        val recordUndo = layers.isNotEmpty()
         // If a stroke is live on the active layer, an insert at-or-before its index (aboveActive =
         // false inserts AT activeLayerIndex, pushing the stroked layer up by one) silently shifts
         // what activeLayerIndex numerically points at even without us touching the field directly -
@@ -180,6 +289,7 @@ class CanvasEngine(val widthPx: Int, val heightPx: Int) {
         } else {
             clampedInsertAt.coerceIn(0, layers.size - 1)
         }
+        if (recordUndo) undoManager.pushLayerInsert(layer, clampedInsertAt, activeBefore, activeLayerIndex)
         bumpRevision()
         return layer
     }
@@ -194,6 +304,7 @@ class CanvasEngine(val widthPx: Int, val heightPx: Int) {
             blendMode = src.blendMode,
             isReferenceImage = src.isReferenceImage,
         )
+        val activeBefore = activeLayerIndex
         layers.add(activeLayerIndex + 1, copy)
         // Keep focus on the layer actually being stroked right now instead of jumping to the new
         // duplicate - see strokeInProgressLayerId's doc comment. Inserting strictly after
@@ -202,28 +313,34 @@ class CanvasEngine(val widthPx: Int, val heightPx: Int) {
         if (src.id != strokeInProgressLayerId) {
             activeLayerIndex += 1
         }
+        undoManager.pushLayerInsert(copy, activeBefore + 1, activeBefore, activeLayerIndex)
         bumpRevision()
     }
 
-    fun deleteActiveLayer() {
-        if (layers.size <= 1) return
-        val layer = layers.getOrNull(activeLayerIndex) ?: return
-        if (layer.id == strokeInProgressLayerId) return
-        layers.removeAt(activeLayerIndex)
-        layer.bitmap.recycle()
-        activeLayerIndex = activeLayerIndex.coerceIn(0, layers.size - 1)
-        // Degrade gracefully rather than leaving a dangling pointer: if the layer just deleted was
-        // the one the current pose guide was computed against, there's nothing left for that
-        // overlay to sit on top of -- clear it the same way "no reference image present" leaves
-        // the pose toggle simply unavailable, instead of a stale skeleton floating over whatever's
-        // now underneath it.
-        if (layer.id == poseGuideLayerId) {
-            poseGuide = null
-            poseGuideLayerId = null
-            poseGuideEnabled = false
-            poseGuideContentVersion = -1
-        }
+    /**
+     * Deletes the active layer as an UNDOABLE step. The layer -- Layer object, bitmap and all -- is
+     * detached and handed to [UndoManager], which keeps its pixels alive until the step is evicted
+     * over the byte budget, dropped from redo, or history is cleared; it is NOT recycled here (the
+     * old code recycled on the spot, so a delete was permanent and undo then silently rewound a
+     * different layer). Undo re-inserts it at the same index with the same active layer.
+     *
+     * @return true if a layer was deleted; false for the guarded no-ops (last layer, or the layer a
+     * stylus stroke is still drawing into) so the UI only offers "Undo" for a delete that happened.
+     */
+    fun deleteActiveLayer(): Boolean {
+        if (layers.size <= 1) return false
+        val index = activeLayerIndex
+        val layer = layers.getOrNull(index) ?: return false
+        if (layer.id == strokeInProgressLayerId) return false
+        layers.removeAt(index)
+        clearPoseGuideIfOn(layer)
+        activeLayerIndex = index.coerceIn(0, layers.size - 1)
+        // Deleting below the top leaves activeLayerIndex numerically unchanged (so its setter's
+        // marquee reset doesn't fire) while it now points at a different layer.
+        selectionRect = null
+        undoManager.pushLayerRemove(layer, index, activeBefore = index, activeAfter = activeLayerIndex)
         bumpRevision()
+        return true
     }
 
     fun moveActiveLayer(delta: Int) {
@@ -235,6 +352,7 @@ class CanvasEngine(val widthPx: Int, val heightPx: Int) {
         layers.removeAt(from)
         layers.add(to, layer)
         activeLayerIndex = to
+        undoManager.pushLayerMove(layer.id, from, to, activeBefore = from, activeAfter = to)
         bumpRevision()
     }
 
@@ -245,24 +363,41 @@ class CanvasEngine(val widthPx: Int, val heightPx: Int) {
     // Layer property mutations funnel through here (rather than setting Layer fields directly from
     // the UI) so every visible change reliably bumps [revision] — the plain-View drawing surface
     // isn't part of Compose's snapshot system, so it relies on watching this counter to know when
-    // to invalidate.
+    // to invalidate. They are also where property edits become undo history: each opens a property
+    // gesture on the layer (UndoManager.beginLayerPropsEdit snapshots the values once) before
+    // mutating. The discrete setters close it immediately (one tap = one step); the opacity setter
+    // is called on every slider tick and deliberately leaves it open -- the slider calls
+    // [commitLayerPropsEdit] from onValueChangeFinished, so a whole drag is ONE step. If nobody
+    // commits (panel disposed mid-drag), the next history push / undo / redo closes it.
     fun setLayerOpacity(layer: Layer, opacity: Float) {
+        undoManager.beginLayerPropsEdit(layer)
         layer.opacity = opacity.coerceIn(0f, 1f)
         bumpRevision()
     }
 
+    /** Ends the current property gesture (slider released) -- see the note above [setLayerOpacity]. */
+    fun commitLayerPropsEdit() {
+        undoManager.endLayerPropsEdit()
+    }
+
     fun setLayerVisible(layer: Layer, visible: Boolean) {
+        undoManager.beginLayerPropsEdit(layer)
         layer.visible = visible
+        undoManager.endLayerPropsEdit()
         bumpRevision()
     }
 
     fun setLayerBlendMode(layer: Layer, mode: LayerBlendMode) {
+        undoManager.beginLayerPropsEdit(layer)
         layer.blendMode = mode
+        undoManager.endLayerPropsEdit()
         bumpRevision()
     }
 
     fun setLayerLocked(layer: Layer, locked: Boolean) {
+        undoManager.beginLayerPropsEdit(layer)
         layer.locked = locked
+        undoManager.endLayerPropsEdit()
         bumpRevision()
     }
 
@@ -364,27 +499,11 @@ class CanvasEngine(val widthPx: Int, val heightPx: Int) {
      * automatically stays honest with what's actually on screen without each needing its own wiring.
      */
     fun flatten(): Bitmap {
-        val out = Bitmap.createBitmap(widthPx, heightPx, Bitmap.Config.ARGB_8888)
-        val canvas = Canvas(out)
-        canvas.drawColor(Color.WHITE)
-        val paint = Paint(Paint.ANTI_ALIAS_FLAG)
-        for (layer in layers) {
-            if (!layer.visible || layer.opacity <= 0f) continue
-            paint.alpha = (layer.opacity.coerceIn(0f, 1f) * 255).toInt()
-            paint.blendMode = layer.blendMode.blendMode
-            canvas.drawBitmap(layer.bitmap, 0f, 0f, paint)
-            paint.blendMode = null
-        }
-        val settings = VellumApp.instance.settingsRepository
-        if (settings.paperTextureEnabled) {
-            paint.shader = PaperTexture.shader
-            paint.blendMode = BlendMode.MULTIPLY
-            paint.alpha = (PaperTexture.clampStrength(settings.paperTextureStrength) * 255).toInt()
-            canvas.drawRect(0f, 0f, widthPx.toFloat(), heightPx.toFloat(), paint)
-            paint.shader = null
-            paint.blendMode = null
-        }
-        return out
+        // The recipe itself lives in LayerFlattener so the save pipeline can run the identical
+        // composite over its off-main snapshots instead of these live bitmaps.
+        val inputs = layers.filter { it.visible && it.opacity > 0f }
+            .map { LayerFlattener.Input(it.bitmap, it.opacity, it.blendMode) }
+        return LayerFlattener.flatten(widthPx, heightPx, widthPx, heightPx, inputs)
     }
 
     fun recycleAll() {
@@ -394,6 +513,11 @@ class CanvasEngine(val widthPx: Int, val heightPx: Int) {
     }
 
     companion object {
+        // Undo step-count clamp (the depth clamp the old computeUndoDepth applied); the byte budget
+        // is what actually bounds memory in between. See UndoManager's eviction note.
+        const val MIN_UNDO_STEPS = 6
+        const val MAX_UNDO_STEPS = 60
+
         // Single source of truth for BrushBar's Size/Opacity sliders (see BrushBar.kt) and for
         // EditorScreen's bracket-key/number-key keyboard shortcuts, which need the exact same
         // bounds to clamp against rather than a second, independently-maintained copy of them.
