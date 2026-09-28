@@ -34,7 +34,7 @@ class MainActivity : ComponentActivity() {
                     )
                     // Above the nav graph so a save failure outlives the editor that requested it
                     // (Back saves and leaves in one click) -- see SaveFailureHost.
-                    SaveFailureHost(app.repository, Modifier.align(Alignment.BottomCenter))
+                    SaveFailureHost(app.repository, app.recoveryNotices, Modifier.align(Alignment.BottomCenter))
                 }
             }
         }

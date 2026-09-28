@@ -8,16 +8,20 @@ import com.vellum.studio.model.ProjectRepository
 import com.vellum.studio.model.SettingsRepository
 import com.vellum.studio.model.UserPhotoTemplateRepository
 import com.vellum.studio.util.DiagnosticLog
+import com.vellum.studio.util.RecoveryNotices
 
 class VellumApp : Application() {
     // Kept as a named Lazy so onTrimMemory can ask "was it ever created" without creating it.
     private val repositoryDelegate = lazy { ProjectRepository(this) }
     val repository: ProjectRepository by repositoryDelegate
-    val paletteRepository: PaletteRepository by lazy { PaletteRepository(this) }
-    val academyProgressRepository: AcademyProgressRepository by lazy { AcademyProgressRepository(this) }
+    // User-data files (brushes, palettes, My Photos index, Academy progress) that turned out damaged and
+    // were set aside; shown by the same app-level host as save failures (see SaveFailureHost).
+    val recoveryNotices = RecoveryNotices()
+    val paletteRepository: PaletteRepository by lazy { PaletteRepository(this, recoveryNotices) }
+    val academyProgressRepository: AcademyProgressRepository by lazy { AcademyProgressRepository(this, recoveryNotices) }
     val settingsRepository: SettingsRepository by lazy { SettingsRepository(this) }
-    val customBrushRepository: CustomBrushRepository by lazy { CustomBrushRepository(this) }
-    val userPhotoTemplateRepository: UserPhotoTemplateRepository by lazy { UserPhotoTemplateRepository(this) }
+    val customBrushRepository: CustomBrushRepository by lazy { CustomBrushRepository(this, recoveryNotices) }
+    val userPhotoTemplateRepository: UserPhotoTemplateRepository by lazy { UserPhotoTemplateRepository(this, recoveryNotices) }
 
     override fun onCreate() {
         super.onCreate()

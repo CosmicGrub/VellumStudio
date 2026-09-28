@@ -115,10 +115,30 @@ object DurableFile {
      * it could not be moved AND could not be copied.
      */
     fun quarantine(file: File): File? {
-        var dest = File(file.parentFile, file.name + ".corrupt")
-        if (dest.exists()) dest = File(file.parentFile, file.name + ".corrupt-" + System.currentTimeMillis())
+        val dest = corruptNameFor(file)
         if (file.renameTo(dest)) return dest
         return runCatching { file.copyTo(dest, overwrite = false); file.delete(); dest }.getOrNull()
+    }
+
+    /**
+     * Like [quarantine] but leaves [file] in place: for a file that is still mostly usable (a list
+     * with a few undecodable entries) where the caller keeps serving the good part but must not let
+     * the next save destroy the only copy of the bad part. Returns the copy, or null if it failed.
+     */
+    fun preserveCopy(file: File): File? {
+        val dest = corruptNameFor(file)
+        return runCatching { file.copyTo(dest, overwrite = false); dest }.getOrNull()
+    }
+
+    /** `<name>.corrupt`, else `<name>.corrupt-<ms>` (plus `-<n>` if even that is taken), never an existing file. */
+    private fun corruptNameFor(file: File): File {
+        val plain = File(file.parentFile, file.name + ".corrupt")
+        if (!plain.exists()) return plain
+        val stamp = System.currentTimeMillis()
+        var candidate = File(file.parentFile, file.name + ".corrupt-" + stamp)
+        var n = 1
+        while (candidate.exists()) candidate = File(file.parentFile, file.name + ".corrupt-" + stamp + "-" + n++)
+        return candidate
     }
 
     /** Deletes stray `*.tmp` files (an interrupted write's leftovers) directly inside [dir]. */
