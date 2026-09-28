@@ -6,13 +6,16 @@ import android.graphics.Color
 import com.vellum.studio.VellumApp
 import com.vellum.studio.canvas.CanvasEngine
 import com.vellum.studio.canvas.Layer
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
+import kotlinx.coroutines.cancelAndJoin
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
@@ -75,16 +78,17 @@ class ProjectDurabilityTest {
         }
 
         override fun encodeLayer(layerId: String, bitmap: Bitmap, out: OutputStream): Boolean {
-            failEncode?.let {
-                out.write(ByteArray(100)) // a partial write, so the tmp file really has bytes to clean up
-                throw it
-            }
             val n = active.incrementAndGet()
             maxConcurrentEncodes.accumulateAndGet(n) { a, b -> maxOf(a, b) }
             try {
                 entered.countDown()
                 gate?.await(10, TimeUnit.SECONDS)
                 if (dawdleMs > 0) Thread.sleep(dawdleMs)
+                // After the gate, so a test can hold an encode open and only THEN have it fail.
+                failEncode?.let {
+                    out.write(ByteArray(100)) // a partial write, so the tmp file really has bytes to clean up
+                    throw it
+                }
                 encodedIds += layerId
                 return super.encodeLayer(layerId, bitmap, out)
             } finally {
@@ -430,6 +434,77 @@ class ProjectDurabilityTest {
         val outcome = repo.saveProjectDurably(meta, engine)
         assertFalse(outcome.saved)
         assertNotNull(outcome.failure)
+    }
+
+    /**
+     * The Back-button scenario: EditorScreen requests the save, and its composition scope (the only
+     * thing awaiting the outcome) is cancelled by the navigation in the same click -- before the
+     * encode has finished failing. The failure must still be observable, on app-scoped state, or the
+     * user leaves believing unsaved strokes were saved.
+     */
+    @Test
+    fun `a write failure is observable on saveFailures after the requesting scope was cancelled`() = runBlocking {
+        val hooks = TestHooks()
+        val repo = repo(hooks)
+        val (meta, engine, _) = threeLayerProject(repo, hooks)
+        paint(engine.layers[0], Color.WHITE)
+        assertTrue(repo.saveFailures.value.isEmpty())
+
+        hooks.failEncode = IOException("write failed: ENOSPC (No space left on device)")
+        hooks.arm() // hold the encode open so the scope is provably cancelled BEFORE the failure happens
+        val screenScope = CoroutineScope(Dispatchers.Default)
+        val pending = repo.requestSave(meta, engine)
+        val awaiter = screenScope.launch { pending.await() }
+        assertTrue(hooks.entered.await(10, TimeUnit.SECONDS))
+        awaiter.cancelAndJoin()
+        screenScope.cancel() // "Back": the screen and everything launched on it is gone
+        hooks.gate!!.countDown()
+
+        val outcome = withTimeout(10_000) { pending.await() } // the save itself still ran to completion
+        assertEquals(SaveFailure.Kind.STORAGE_FULL, outcome.failure!!.kind)
+
+        val notices = repo.saveFailures.value
+        assertEquals(1, notices.size)
+        assertEquals(meta.id, notices[0].projectId)
+        assertEquals(SaveFailure.Kind.STORAGE_FULL, notices[0].failure.kind)
+        assertTrue(notices[0].message.contains(meta.name))
+        assertTrue(notices[0].message.contains("storage is full"))
+
+        // Stays until a host reports having shown it, then is gone.
+        assertEquals(1, repo.saveFailures.value.size)
+        repo.acknowledgeSaveFailure(notices[0])
+        assertTrue(repo.saveFailures.value.isEmpty())
+    }
+
+    @Test
+    fun `a capture-time failure is published too, and repeats for the same project and kind do not pile up`() = runBlocking {
+        val repo = repo()
+        val (meta, engine, _) = threeLayerProject(repo)
+        paint(engine.layers[0], Color.WHITE)
+        engine.layers[0].bitmap.recycle() // capture itself throws (stands in for an OOM copying a layer)
+
+        // Nobody awaits either of these -- the requester is "already gone".
+        repo.requestSave(meta, engine)
+        repo.requestSave(meta, engine)
+        val notices = repo.saveFailures.value
+        assertEquals("deduplicated per (project, kind)", 1, notices.size)
+        assertEquals(meta.id, notices[0].projectId)
+        assertFalse(notices[0].failure.userMessage.isBlank())
+    }
+
+    @Test
+    fun `a successful save publishes nothing and a failed project creation throws instead of also raising a notice`() = runBlocking {
+        val hooks = TestHooks()
+        val repo = repo(hooks)
+        val (meta, engine, _) = threeLayerProject(repo, hooks)
+        paint(engine.layers[1], Color.CYAN)
+        assertTrue(repo.saveProjectDurably(meta, engine).saved)
+        assertTrue(repo.saveFailures.value.isEmpty())
+
+        hooks.failEncode = IOException("write failed: ENOSPC (No space left on device)")
+        val thrown = try { repo.createProject("Doomed", 32, 32); null } catch (e: IOException) { e }
+        assertNotNull("creation surfaces failure as an exception", thrown)
+        assertTrue("...and does not double-report through the snackbar channel", repo.saveFailures.value.isEmpty())
     }
 
     @Test

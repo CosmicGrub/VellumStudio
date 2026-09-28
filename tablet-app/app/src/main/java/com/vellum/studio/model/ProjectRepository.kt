@@ -19,6 +19,10 @@ import com.vellum.studio.util.DurableFile
 import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
@@ -64,6 +68,36 @@ class ProjectRepository internal constructor(private val appContext: Context, pr
     constructor(appContext: Context) : this(appContext, SaveHooks())
 
     private val coordinator = SaveCoordinator()
+
+    private val _saveFailures = MutableStateFlow<List<SaveFailureNotice>>(emptyList())
+
+    /**
+     * Save failures nobody has been told about yet, oldest first -- the app-level home for the
+     * "your save failed" message. It lives here (app-scoped, like [coordinator]) rather than in
+     * the editor because Back is the most valuable save trigger and it navigates away in the same
+     * click: the editor's composition scope, and the SnackbarHost hanging off it, are gone before a
+     * disk-full encode can finish failing, so a snackbar launched from there was silently dropped.
+     * A STATE (not a replay-less event flow) on purpose: a failure that lands while no host happens
+     * to be collecting (mid-navigation transition, Activity recreation) is still there when one
+     * appears, and stays until [acknowledgeSaveFailure] says it was actually shown. One notice per
+     * (project, kind): an autosave loop hitting the same full disk must not queue a snackbar per
+     * stroke.
+     */
+    val saveFailures: StateFlow<List<SaveFailureNotice>> = _saveFailures.asStateFlow()
+
+    /** Called by the host once [notice] was shown (or dismissed) so it is not shown again. */
+    fun acknowledgeSaveFailure(notice: SaveFailureNotice) {
+        _saveFailures.update { list -> list - notice }
+    }
+
+    private fun publishFailure(outcome: SaveOutcome): SaveOutcome {
+        val failure = outcome.failure ?: return outcome
+        _saveFailures.update { list ->
+            list.filterNot { it.projectId == outcome.meta.id && it.failure.kind == failure.kind } +
+                SaveFailureNotice(outcome.meta.id, outcome.meta.name, failure)
+        }
+        return outcome
+    }
 
     // ignoreUnknownKeys: an unrecognized field (e.g. saved by a newer build) is dropped, not fatal.
     // coerceInputValues: a field whose value doesn't match its type (wrong JSON type, or `null` for
@@ -421,15 +455,24 @@ class ProjectRepository internal constructor(private val appContext: Context, pr
      * (which recycles the live bitmap), undo (erase + redraw in place) or the next stroke mid-encode
      * can neither crash the save nor tear the file.
      */
-    fun requestSave(meta: ProjectMeta, engine: CanvasEngine): Deferred<SaveOutcome> {
+    fun requestSave(meta: ProjectMeta, engine: CanvasEngine): Deferred<SaveOutcome> =
+        requestSave(meta, engine, reportFailure = true)
+
+    /**
+     * [reportFailure] publishes a failed outcome on [saveFailures] -- synchronously for a capture
+     * failure, from the coordinator's thread for a write failure -- so it is observable no matter
+     * whether the requester is still around to await the [Deferred]. Off only for [persistNew],
+     * whose caller gets the failure as a thrown exception and must not also see a stray snackbar.
+     */
+    private fun requestSave(meta: ProjectMeta, engine: CanvasEngine, reportFailure: Boolean): Deferred<SaveOutcome> {
         val state = coordinator.stateFor(meta.id)
         val plan = try {
             capture(meta, engine, state)
         } catch (t: Throwable) {
             // e.g. OOM copying a big layer, or a layer whose bitmap is already recycled.
-            return CompletableDeferred(failureOutcome(meta, t))
+            return CompletableDeferred(failureOutcome(meta, t, reportFailure))
         }
-        return coordinator.submit(state, plan, run = { runSave(state, it) }, onFailure = ::failureOutcome)
+        return coordinator.submit(state, plan, run = { runSave(state, it) }, onFailure = { m, t -> failureOutcome(m, t, reportFailure) })
     }
 
     private fun capture(meta: ProjectMeta, engine: CanvasEngine, state: ProjectState): SavePlan {
@@ -553,15 +596,16 @@ class ProjectRepository internal constructor(private val appContext: Context, pr
         return out
     }
 
-    private fun failureOutcome(meta: ProjectMeta, t: Throwable): SaveOutcome {
+    private fun failureOutcome(meta: ProjectMeta, t: Throwable, reportFailure: Boolean): SaveOutcome {
         val failure = classifyFailure(t, runCatching { projectsRoot.usableSpace }.getOrNull())
         DiagnosticLog.log(appContext, "ProjectRepository", "Save FAILED for project ${meta.id} (${failure.kind}): ${failure.detail}\n${t.stackTraceToString().take(1500)}")
-        return SaveOutcome(meta, failure)
+        val outcome = SaveOutcome(meta, failure)
+        return if (reportFailure) publishFailure(outcome) else outcome
     }
 
     /** First save of a brand-new project (create/createFromTemplate): the engine is private to the caller, so this awaits the durable write and throws if it failed -- a project that could not be created must not look created. */
     private suspend fun persistNew(meta: ProjectMeta, engine: CanvasEngine): ProjectMeta {
-        val outcome = requestSave(meta, engine).await()
+        val outcome = requestSave(meta, engine, reportFailure = false).await()
         outcome.failure?.let { throw IOException("Couldn't create project: ${it.kind} ${it.detail}") }
         return outcome.meta
     }

@@ -36,6 +36,15 @@ class SaveFailure(val kind: Kind, val detail: String?) {
 }
 
 /**
+ * A failed save that has not been shown to the user yet -- see [ProjectRepository.saveFailures].
+ * Carries the project name because the screen that finally shows it is often not the editor of that
+ * project (Back has already navigated away by the time an encode/fsync fails).
+ */
+class SaveFailureNotice(val projectId: String, val projectName: String, val failure: SaveFailure) {
+    val message: String get() = "\"$projectName\": ${failure.userMessage}"
+}
+
+/**
  * Seams for tests only ([ProjectRepository]'s internal constructor takes one); production always
  * uses this default. Kept as a tiny open class rather than sprinkling `if (testing)` through the
  * pipeline: tests can observe/slow/fail the two places a real device can be killed or run out of

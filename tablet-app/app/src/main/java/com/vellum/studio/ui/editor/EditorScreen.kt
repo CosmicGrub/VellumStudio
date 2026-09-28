@@ -171,14 +171,13 @@ fun EditorScreen(
             // encode/write to the app-scoped SaveCoordinator -- so Back (saveNow() then onBack())
             // can no longer race this composition's scope being cancelled before a launched body
             // ever ran, and the save itself survives the screen going away either way. The launch
-            // below only waits for the result to update `meta` and to tell the user if it failed
-            // (disk full etc.); a failure here is a Snackbar, never a crash.
+            // below only waits for the result to update `meta`. It deliberately does NOT report a
+            // failure: on Back this scope (and this screen's SnackbarHost) is cancelled before the
+            // encode can finish failing, which used to drop the message silently. A failure is
+            // published on repository.saveFailures instead and shown by the app-level host in
+            // VellumNavGraph, which outlives this screen -- one path for autosave and Back alike.
             val pending = repository.requestSave(m, e)
-            scope.launch {
-                val outcome = pending.await()
-                meta = outcome.meta
-                outcome.failure?.let { snackbarHostState.showSnackbar(it.userMessage) }
-            }
+            scope.launch { meta = pending.await().meta }
         }
     }
 
