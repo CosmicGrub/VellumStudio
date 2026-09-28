@@ -39,6 +39,7 @@ import java.io.File
 import java.io.FileOutputStream
 import java.io.IOException
 import java.util.UUID
+import java.util.concurrent.CopyOnWriteArraySet
 import java.util.zip.ZipEntry
 import java.util.zip.ZipOutputStream
 
@@ -68,6 +69,49 @@ class ProjectRepository internal constructor(private val appContext: Context, pr
     constructor(appContext: Context) : this(appContext, SaveHooks())
 
     private val coordinator = SaveCoordinator()
+
+    private val _libraryRevision = MutableStateFlow(0)
+
+    /**
+     * Ticks whenever what the gallery would list changed: a save committed (new thumbnail and
+     * updatedAt/sort position), a project was deleted or renamed. The gallery re-lists on every tick
+     * instead of once per composition, so a card can never keep showing the thumbnail from before
+     * the save that finished after the gallery loaded (Back used to navigate ahead of the write).
+     * Ticked at the end of the write, before its waiters are released, so anything that awaited a
+     * save and then reads this (or lists projects) sees the fresh state.
+     */
+    val libraryRevision: StateFlow<Int> = _libraryRevision.asStateFlow()
+
+    private fun libraryChanged() {
+        _libraryRevision.update { it + 1 }
+    }
+
+    // Editors currently open, so the process-wide trim-memory callback can reach their autosavers.
+    private val openAutosavers: MutableSet<EditorAutosaver> = CopyOnWriteArraySet()
+
+    /**
+     * The autosave policy for an editor that just loaded [meta]/[engine] (see [EditorAutosaver]).
+     * Registered here so [onTrimMemory] reaches it; the editor must [EditorAutosaver.close] it.
+     */
+    fun openAutosaver(meta: ProjectMeta, engine: CanvasEngine): EditorAutosaver {
+        val saver = EditorAutosaver(
+            initialMeta = meta,
+            engine = engine,
+            save = { m, e -> requestSave(m, e) },
+            log = { DiagnosticLog.log(appContext, "Autosave", "${meta.id}: $it") },
+            onClose = { openAutosavers.remove(it) },
+        )
+        openAutosavers += saver
+        return saver
+    }
+
+    /**
+     * Forwarded from the Application's trim-memory callback (main thread): from UI_HIDDEN up, every
+     * open editor flushes. A no-op for an editor with nothing unsaved.
+     */
+    fun onTrimMemory(level: Int) {
+        openAutosavers.forEach { it.onTrimMemory(level) }
+    }
 
     private val _saveFailures = MutableStateFlow<List<SaveFailureNotice>>(emptyList())
 
@@ -549,6 +593,8 @@ class ProjectRepository internal constructor(private val appContext: Context, pr
             DiagnosticLog.log(appContext, "ProjectRepository", "Thumbnail update failed for project ${meta.id} (${t.javaClass.simpleName}: ${t.message}); project itself saved fine")
         }
         DiagnosticLog.log(appContext, "ProjectRepository", "Project saved (id=${meta.id}, name=${meta.name}, layers=${meta.layers.size}, reencoded=${written.size})")
+        // Last, after the thumbnail: this is what tells the gallery its card is stale.
+        libraryChanged()
         return SaveOutcome(meta)
     }
 
@@ -615,6 +661,7 @@ class ProjectRepository internal constructor(private val appContext: Context, pr
         coordinator.withProjectLock(updated.id) {
             DurableFile.writeText(metaFile(updated.id), json.encodeToString(updated), keepBackup = true, backupIsValid = ::isParseableMeta)
         }
+        libraryChanged()
         updated
     }
 
@@ -625,6 +672,7 @@ class ProjectRepository internal constructor(private val appContext: Context, pr
             state.savedVersions.clear()
             state.clearThumbs()
         }
+        libraryChanged()
         Unit
     }
 

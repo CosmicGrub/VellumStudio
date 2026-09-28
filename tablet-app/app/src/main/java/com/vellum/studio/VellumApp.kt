@@ -10,7 +10,9 @@ import com.vellum.studio.model.UserPhotoTemplateRepository
 import com.vellum.studio.util.DiagnosticLog
 
 class VellumApp : Application() {
-    val repository: ProjectRepository by lazy { ProjectRepository(this) }
+    // Kept as a named Lazy so onTrimMemory can ask "was it ever created" without creating it.
+    private val repositoryDelegate = lazy { ProjectRepository(this) }
+    val repository: ProjectRepository by repositoryDelegate
     val paletteRepository: PaletteRepository by lazy { PaletteRepository(this) }
     val academyProgressRepository: AcademyProgressRepository by lazy { AcademyProgressRepository(this) }
     val settingsRepository: SettingsRepository by lazy { SettingsRepository(this) }
@@ -25,6 +27,18 @@ class VellumApp : Application() {
         // here) is captured too.
         DiagnosticLog.install(this)
         DiagnosticLog.log(this, "Lifecycle", "App started (${DiagnosticLog.deviceBanner()})")
+    }
+
+    /**
+     * Process-wide memory-pressure callback. UI_HIDDEN (and everything above it) means no UI of ours
+     * is visible any more, i.e. the process just became a kill candidate: any editor with unsaved
+     * changes flushes NOW rather than hoping the debounce beats lmkd. The editor's own ON_STOP flush
+     * normally got there first, in which case this is free (dirty flag). Deliberately does not touch
+     * [repository] if nothing ever created it -- an editor cannot be open without it.
+     */
+    override fun onTrimMemory(level: Int) {
+        super.onTrimMemory(level)
+        if (repositoryDelegate.isInitialized()) repository.onTrimMemory(level)
     }
 
     companion object {

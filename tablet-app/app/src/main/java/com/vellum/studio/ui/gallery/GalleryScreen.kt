@@ -46,6 +46,7 @@ import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -82,11 +83,15 @@ fun GalleryScreen(
     var projects by remember { mutableStateOf<List<ProjectSummary>>(emptyList()) }
     var loading by remember { mutableStateOf(true) }
     var showNewCanvasDialog by remember { mutableStateOf(false) }
-    var revision by remember { mutableStateOf(0) }
     val scope = rememberCoroutineScope()
+    // Re-list whenever the library changes underneath us -- a save committing (fresh thumbnail and
+    // updatedAt sort position), a delete, a rename -- rather than once per composition. Coming back
+    // from the editor used to list while the save Back had just started was still being written,
+    // and nothing ever re-listed, so the card kept the old thumbnail and sort position. Only the
+    // first load shows the spinner: a refresh swaps the list in place (keeps scroll position).
+    val libraryRevision by repository.libraryRevision.collectAsState()
 
-    LaunchedEffect(revision) {
-        loading = true
+    LaunchedEffect(libraryRevision) {
         projects = repository.listProjects()
         loading = false
     }
@@ -145,10 +150,7 @@ fun GalleryScreen(
                             project = project,
                             onClick = { onOpenProject(project.id) },
                             onDelete = {
-                                scope.launch {
-                                    repository.deleteProject(project.id)
-                                    revision++
-                                }
+                                scope.launch { repository.deleteProject(project.id) }
                             },
                         )
                     }
