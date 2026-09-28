@@ -1,6 +1,5 @@
 package com.vellum.studio.ui.editor
 
-import android.graphics.BitmapFactory
 import android.view.DragEvent
 import android.view.View
 import androidx.activity.compose.BackHandler
@@ -110,6 +109,7 @@ import com.vellum.studio.model.SaveStatus
 import com.vellum.studio.model.SettingsRepository
 import com.vellum.studio.network.LiveCanvasBridge
 import com.vellum.studio.ui.colorpicker.ColorPickerPanel
+import com.vellum.studio.util.ImageImport
 import com.vellum.studio.util.Printing
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -621,17 +621,20 @@ fun EditorScreen(
                                     // valid, not after hopping to a coroutine.
                                     (context as? android.app.Activity)?.requestDragAndDropPermissions(event)
                                     scope.launch {
-                                        val bitmap = withContext(Dispatchers.IO) {
-                                            runCatching {
-                                                context.contentResolver.openInputStream(uri)
-                                                    ?.use { BitmapFactory.decodeStream(it) }
-                                            }.getOrNull()
+                                        // Same shared oriented, bounded decode as the Layers-panel picker.
+                                        val result = withContext(Dispatchers.IO) {
+                                            ImageImport.decode(
+                                                context, uri,
+                                                ImageImport.referenceLongEdge(currentEngine.widthPx, currentEngine.heightPx),
+                                            )
                                         }
-                                        if (bitmap != null) {
-                                            currentEngine.addImageLayer("Reference", bitmap)
-                                            snackbarHostState.showSnackbar("Reference image added as a new layer")
-                                        } else {
-                                            snackbarHostState.showSnackbar("Couldn't import the dropped image")
+                                        when (result) {
+                                            is ImageImport.Result.Decoded -> {
+                                                currentEngine.addImageLayer("Reference", result.bitmap)
+                                                result.bitmap.recycle() // addImageLayer copies into its own bitmap
+                                                snackbarHostState.showSnackbar("Reference image added as a new layer")
+                                            }
+                                            is ImageImport.Result.Failed -> snackbarHostState.showSnackbar(result.message)
                                         }
                                     }
                                     true
