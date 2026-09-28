@@ -154,6 +154,15 @@ android {
             // manifest/resources this switch puts on the unit-test classpath. The plain-JVM-fails-
             // loudly rationale above is unaffected, since it is about isReturnDefaultValues.
             isIncludeAndroidResources = true
+            // Every test CLASS runs in its own worker JVM. Measured, not assumed: the Compose UI tests
+            // (NavGuardsTest, GalleryCreateGuardTest) pass alone in ~15 s, and pass alongside any single
+            // other test package, but run late in ONE shared JVM after ~340 other Robolectric tests they
+            // never reach Compose idle ("Compose did not get idle ... in 60 SECONDS", the Robolectric main
+            // thread spinning in ComposeIdlingResource.isIdleNow, every background worker parked) --
+            // including the trivial stub-NavHost ones, so it is not app code. State accumulated across
+            // classes in one sandbox is the trigger; isolating classes is the remedy. The exact piece of
+            // shared state was NOT identified, and it is NOT heap (a 2g worker heap changed nothing).
+            all { it.forkEvery = 1 }
         }
     }
 
