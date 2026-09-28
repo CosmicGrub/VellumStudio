@@ -308,6 +308,15 @@ fun EditorScreen(
         saveNow()
         onBack()
     }
+    // Composed AFTER the exit handler on purpose: the OnBackPressedDispatcher gives priority to
+    // the most recently added enabled callback, so while the Layers panel is open system Back
+    // closes it first and only a second Back leaves (and saves) the editor. Before this the
+    // handler above ignored the panel, so one Back tap threw the user out of the editor with the
+    // panel still open. Being enabled only while open, it drops out of the way the moment the
+    // panel closes.
+    BackHandler(enabled = layersPanelOpen) {
+        layersPanelOpen = false
+    }
 
     Scaffold(
         modifier = Modifier
