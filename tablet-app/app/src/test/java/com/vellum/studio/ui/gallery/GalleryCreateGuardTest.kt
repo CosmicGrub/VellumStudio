@@ -41,7 +41,12 @@ import java.util.concurrent.atomic.AtomicInteger
  * setting off VellumApp.instance.
  */
 @RunWith(RobolectricTestRunner::class)
-@Config(sdk = [33], application = VellumApp::class)
+// Tablet-width window on purpose. On this branch the Gallery leads with a Quick Sketch button instead of
+// the "New Canvas" FAB whenever the window is compact (< 600dp, see util/isCompactWidth), and
+// Robolectric's default window is phone-narrow -- so without this qualifier the FAB these tests drive
+// is (correctly) not on screen. These tests exercise the tablet layout; the compact layout is the
+// Fold-only variant of the same screen.
+@Config(sdk = [33], application = VellumApp::class, qualifiers = "w840dp-h1280dp")
 @GraphicsMode(GraphicsMode.Mode.NATIVE)
 class GalleryCreateGuardTest {
 
