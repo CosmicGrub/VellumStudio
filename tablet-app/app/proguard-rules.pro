@@ -96,3 +96,17 @@
 -keep class com.google.android.gms.internal.mlkit_vision_pose_accurate.** { *; }
 -dontwarn com.google.mlkit.**
 -dontwarn com.google.android.gms.internal.mlkit_vision_pose_**
+
+# =====================================================================================
+# Stack traces from release builds
+# =====================================================================================
+# proguard-android-optimize.txt does not keep SourceFile/LineNumberTable, so a release crash frame
+# reads `Unknown Source` with only R8's synthetic line ranges to go on. Keeping the line-number table
+# lets `retrace` (see docs/RELEASING.md) turn a DiagnosticLog CRASH entry back into the original file
+# and line, given the mapping.txt that scripts/release.sh archives next to each APK. Renaming the
+# source-file attribute to the constant "SourceFile" is the standard companion: it keeps the file
+# NAME out of the shipped APK (the real one is recovered from mapping.txt) while the frames still
+# carry a file. Costs a few hundred KB of APK; changes no runtime behavior and nothing reflection
+# can see, and does not touch the frozen canvas classes' code -- only their debug attributes.
+-keepattributes SourceFile,LineNumberTable
+-renamesourcefileattribute SourceFile

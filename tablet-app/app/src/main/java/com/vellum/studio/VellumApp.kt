@@ -8,6 +8,7 @@ import com.vellum.studio.model.ProjectRepository
 import com.vellum.studio.model.SettingsRepository
 import com.vellum.studio.model.UserPhotoTemplateRepository
 import com.vellum.studio.util.DiagnosticLog
+import com.vellum.studio.util.ProcessExitLog
 import com.vellum.studio.util.RecoveryNotices
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -35,6 +36,10 @@ class VellumApp : Application() {
         // here) is captured too.
         DiagnosticLog.install(this)
         DiagnosticLog.log(this, "Lifecycle", "App started (${DiagnosticLog.deviceBanner()})")
+        // Why the previous process(es) died, per the OS (API 30+; a no-op on 29): the low-memory kills,
+        // ANRs and native crashes the uncaught-exception handler above can never see. Off the main
+        // thread (it reads trace streams), best-effort, and deduped so a relaunch does not repeat it.
+        CoroutineScope(SupervisorJob() + Dispatchers.IO).launch { ProcessExitLog.logRecentExits(this@VellumApp) }
         // Recently deleted keeps a project for ProjectRepository.TRASH_RETENTION_MS (30 days); this is
         // where older ones are finally removed. Off the main thread (it lists and deletes folders),
         // best-effort (an unpurged entry is simply retried next launch), and it creates nothing when

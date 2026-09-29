@@ -11,6 +11,8 @@ tablet-app/keystore.properties
 *.keystore
 tablet-app/**/.cxx/
 *.apk
+# scripts/release.sh output: per-branch APKs, R8 mappings and SHA256SUMS (see docs/RELEASING.md)
+release-artifacts/
 *.aab
 *.ap_
 *.dex
