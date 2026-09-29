@@ -1,7 +1,6 @@
 package com.vellum.studio.ui.coloringbook
 
 import android.graphics.Bitmap
-import android.graphics.BitmapFactory
 import android.graphics.Canvas
 import android.graphics.Color as AndroidColor
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -72,6 +71,7 @@ import com.vellum.studio.model.UserPhotoTemplate
 import com.vellum.studio.model.UserPhotoTemplateRepository
 import com.vellum.studio.util.AssetBitmapCache
 import com.vellum.studio.util.FileBitmapCache
+import com.vellum.studio.util.ImageImport
 import com.vellum.studio.util.Printing
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -120,16 +120,20 @@ fun ColoringBookScreen(
         if (uri == null || importingPhoto || convertingPhoto) return@rememberLauncherForActivityResult
         importingPhoto = true
         scope.launch {
-            val bitmap = withContext(Dispatchers.IO) {
-                runCatching {
-                    context.contentResolver.openInputStream(uri)?.use { BitmapFactory.decodeStream(it) }
-                }.getOrNull()
+            // Shared oriented decode: EXIF-rotated, bounded to 2x PhotoConverter's working size so a
+            // 50 MP photo never allocates in full, and alpha flattened over white because the
+            // conversion's RGBA2GRAY ignores alpha (transparent pixels would read as black).
+            val result = withContext(Dispatchers.IO) {
+                ImageImport.decode(
+                    context, uri,
+                    maxLongEdge = ImageImport.COLORING_IMPORT_LONG_EDGE,
+                    flattenAlphaOnWhite = true,
+                )
             }
             importingPhoto = false
-            if (bitmap != null) {
-                pendingPhotoBitmap = bitmap
-            } else {
-                photoErrorMessage = "Couldn't read that photo. Try a different one."
+            when (result) {
+                is ImageImport.Result.Decoded -> pendingPhotoBitmap = result.bitmap
+                is ImageImport.Result.Failed -> photoErrorMessage = result.message
             }
         }
     }

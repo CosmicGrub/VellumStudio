@@ -1,9 +1,13 @@
 package com.vellum.studio.canvas
 
 import android.graphics.Bitmap
+import android.graphics.Rect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
+import com.vellum.studio.BuildConfig
+import com.vellum.studio.util.TraceSections
+import com.vellum.studio.util.trace
 
 /**
  * What the structural undo steps need from the engine that owns the layer stack. [UndoManager]
@@ -57,25 +61,81 @@ internal sealed interface UndoStep {
 
 private fun bitmapBytes(b: Bitmap): Long = b.width.toLong() * b.height.toLong() * 4L
 
-/** The full bitmap content of [layerId] immediately before / after a stroke (or fill, selection move...). */
-internal class PixelEdit(val layerId: String, val before: Bitmap, val after: Bitmap) : UndoStep {
+/**
+ * The pixel content of [layerId] immediately before / after a stroke (or fill, selection move...),
+ * cropped to [rect] -- the crop-based replacement for the old full-canvas before/after pair (see
+ * [UndoManager]'s class doc). [rect] can be the WHOLE layer (when the caller couldn't report a
+ * tighter bounds -- see [UndoManager.PendingStroke.commit]'s fallback), in which case [before]/
+ * [after] simply equal what used to be stored directly; a crop is exactly the same shape of step,
+ * only smaller, so there is no separate "full" step type.
+ */
+internal class PixelEdit(val layerId: String, val rect: Rect, val before: Bitmap, val after: Bitmap) : UndoStep {
     override val bytes: Long = bitmapBytes(before) + bitmapBytes(after)
 
     override fun undo(findLayer: (String) -> Layer?, host: LayerStackHost?): Boolean {
         val layer = findLayer(layerId) ?: return false
-        layer.restore(before)
+        trace(TraceSections.LAYER_RESTORE) { layer.restoreRect(rect, before) }
         return true
     }
 
     override fun redo(findLayer: (String) -> Layer?, host: LayerStackHost?): Boolean {
         val layer = findLayer(layerId) ?: return false
-        layer.restore(after)
+        trace(TraceSections.LAYER_RESTORE) { layer.restoreRect(rect, after) }
         return true
     }
 
     override fun discard(applied: Boolean) {
         before.recycle()
         after.recycle()
+    }
+}
+
+/** [rect] intersected against a [width]x[height] bitmap, or null if nothing of it survives (fully
+ * off-canvas -- can happen for a stroke/mirror that strayed entirely outside the layer). */
+private fun clampRectToBitmap(rect: Rect, width: Int, height: Int): Rect? {
+    val clamped = Rect(rect)
+    return if (clamped.intersect(0, 0, width, height) && !clamped.isEmpty) clamped else null
+}
+
+/**
+ * Debug-only correctness net for crop-based undo (see the roadmap item this shipped with): diffs
+ * [before] against [after] OUTSIDE [rect] and throws if anything differs there. A real difference
+ * outside the reported rect means whatever fed [rect] under-reported the stroke's true bounds --
+ * the two known ways that happens are [CanvasEngine.flattenScratchOnto]'s wetness blur bleeding past
+ * the raw dab footprint, and a symmetry mirror whose own dirty bounds didn't get unioned in -- and
+ * committing it anyway would silently corrupt undo/redo (a later undo would restore the crop but
+ * leave the un-reported, still-changed pixels outside it exactly as the bad stroke left them).
+ *
+ * Compares via four bulk [Bitmap.getPixels] calls (the disjoint strips above/below/left-of/right-of
+ * [rect] that exactly tile "everything outside rect") rather than a per-pixel `getPixel` scan --
+ * each `getPixel` is its own JNI round-trip, and a full 2048x2048 canvas is 4+ million of them; only
+ * ever runs under [BuildConfig.DEBUG] (see [UndoManager.PendingStroke.commit]), but "debug-only"
+ * should still mean "usable while actually drawing on a device", not "technically doesn't ship".
+ */
+private fun assertRectCoversAllChanges(before: Bitmap, after: Bitmap, rect: Rect) {
+    val width = before.width
+    val height = before.height
+
+    fun stripDiffers(x: Int, y: Int, stripWidth: Int, stripHeight: Int): Boolean {
+        if (stripWidth <= 0 || stripHeight <= 0) return false
+        val n = stripWidth * stripHeight
+        val beforePixels = IntArray(n)
+        val afterPixels = IntArray(n)
+        before.getPixels(beforePixels, 0, stripWidth, x, y, stripWidth, stripHeight)
+        after.getPixels(afterPixels, 0, stripWidth, x, y, stripWidth, stripHeight)
+        return !beforePixels.contentEquals(afterPixels)
+    }
+
+    val differsOutsideRect =
+        stripDiffers(0, 0, width, rect.top) || // full-width strip above the rect
+            stripDiffers(0, rect.bottom, width, height - rect.bottom) || // full-width strip below
+            stripDiffers(0, rect.top, rect.left, rect.height()) || // left of the rect, its own rows
+            stripDiffers(rect.right, rect.top, width - rect.right, rect.height()) // right of the rect
+
+    check(!differsOutsideRect) {
+        "UndoManager: dirty rect $rect under-reports the actual change on a ${width}x$height layer " +
+            "-- a pixel outside it differs before vs. after. Likely cause: wetness blur or a " +
+            "symmetry mirror bled past the reported bounds without being accounted for."
     }
 }
 
@@ -199,15 +259,20 @@ internal class LayerPropsEdit(val layerId: String, val before: LayerProps, val a
 }
 
 /**
- * Undo/redo history. Pixel edits (a stroke, fill, selection move) are stored as a stroke-start
- * snapshot plus the new content -- see [DrawingCanvasView] -- so undo/redo is a cheap bitmap swap
- * rather than a re-simulation. Layer structure (add / delete / reorder) and layer properties
- * (opacity, visibility, blend mode, lock) are steps in the SAME linear history, so Ctrl+Z always
- * undoes the most recent thing the user did, whatever kind it was.
+ * Undo/redo history. Pixel edits (a stroke, fill, selection move) are stored as a before/after pair
+ * CROPPED to the region actually touched -- see [PixelEdit] and [DrawingCanvasView] -- so undo/redo
+ * is a cheap rect-sized bitmap restore rather than a re-simulation or a full-canvas swap. Layer
+ * structure (add / delete / reorder) and layer properties (opacity, visibility, blend mode, lock)
+ * are steps in the SAME linear history, so Ctrl+Z always undoes the most recent thing the user did,
+ * whatever kind it was.
  *
- * The [beginStroke]/[PendingStroke.commit] API is unchanged -- a facade over [PixelEdit] -- so the
- * dab loop and [DrawingCanvasView] are untouched by the structural work.
+ * The [beginStroke]/[PendingStroke.commit] API's SHAPE is unchanged -- still a facade over one
+ * sealed step type per pixel edit -- so the dab loop is untouched either way; [commit] itself grew
+ * an optional dirty-rect parameter (see its own doc) when this item moved [PixelEdit] off full-canvas
+ * bitmaps, which is why [DrawingCanvasView] (not [StrokeRenderer]/[BrushStampCache]) now also has to
+ * accumulate and pass that rect.
  *
+
  * LAYER / BITMAP OWNERSHIP (read this before touching layer lifetimes; the save coordinator
  * snapshots layer bitmaps on Main and reads layers off-thread, and depends on these rules):
  *  - A layer in [CanvasEngine.layers] ("attached") is owned by the engine; its bitmap is recycled
@@ -219,13 +284,18 @@ internal class LayerPropsEdit(val layerId: String, val before: LayerProps, val a
  *    from the redo stack by a fresh edit, or [clear]ed. See [UndoStep.discard]'s `applied` flag.
  *  - Every mutation here (push, undo, redo, evict, recycle) runs on Main. Nothing recycles off-thread.
  *
- * Eviction is by BYTES, not step count: a removed-layer step pins a full ARGB_8888 canvas and a
- * pixel step two of them, while property/move steps are a few bytes. Oldest steps go first while the
- * undo stack is over [budgetBytes], but the newest [minKeptSteps] always survive (the old code's
- * depth floor -- a giant canvas must not leave the user with no undo at all), and [maxDepth] caps the
- * step count outright so a long run of cheap steps can't grow unbounded. Oldest-first is also what
- * keeps history consistent: a step referencing a layer is always evicted before any newer step that
- * deletes it, so a live layer never has stale steps pointing at recycled pixels.
+ * Eviction is by BYTES, not step count: a removed-layer step pins a full ARGB_8888 canvas, while a
+ * pixel step pins only two crops the size of whatever it actually touched (see [PixelEdit] -- a
+ * typical stroke's crop is a small fraction of the full canvas, which is the whole point of this
+ * item: the same [budgetBytes] now buys dozens of steps instead of the ~6 a pair of full-canvas
+ * bitmaps used to allow), and property/move steps are a few bytes. Oldest steps go first while the
+ * undo stack is over [budgetBytes], but the newest [minKeptSteps] always survive -- no longer a
+ * "floor that overrides the budget" the way the old fixed 6-step depth did, just enough to guarantee
+ * one huge step (an uncropped fallback entry, or one genuinely enormous stroke) can never evict
+ * itself and leave zero undo -- and [maxDepth] caps the step count outright so a long run of cheap
+ * steps can't grow unbounded. Oldest-first is also what keeps history consistent: a step referencing
+ * a layer is always evicted before any newer step that deletes it, so a live layer never has stale
+ * steps pointing at recycled pixels.
  *
  * @param host required only for structural steps; a manager used purely for pixel edits (tests) can omit it.
  */
@@ -278,9 +348,33 @@ class UndoManager(
     fun beginStroke(layerId: String, before: Bitmap): PendingStroke = PendingStroke(layerId, before)
 
     inner class PendingStroke(private val layerId: String, private val before: Bitmap) {
-        /** Call when the stroke lifts; [after] is a copy of the layer's bitmap post-stroke. */
-        fun commit(after: Bitmap) {
-            push(PixelEdit(layerId, before, after))
+        /**
+         * Call when the stroke lifts; [after] is a copy of the layer's bitmap post-stroke.
+         *
+         * [dirtyRect] is the caller-reported union of everything the stroke actually touched
+         * (DrawingCanvasView unions [StrokeEngine.takeDirtyBounds] across the whole stroke, padded
+         * for AA and for wetness blur -- see its own doc). When it is null, empty, or entirely
+         * off-canvas -- fill/selection-move not yet reporting one, or a degenerate case -- this
+         * falls back to a step covering the WHOLE layer using [before]/[after] directly (no crop,
+         * no extra copy): correct either way, just not memory-optimal, which is exactly the
+         * "unknown bounds fall back to a full-layer entry" rule this item's approach calls for.
+         *
+         * A crop, when one applies, is taken here (not by the caller) so [before] can be recycled
+         * immediately after -- keeping only the small cropped pair alive in history, not the two
+         * full-canvas snapshots a stroke needed to produce them.
+         */
+        fun commit(after: Bitmap, dirtyRect: Rect? = null) {
+            val rect = dirtyRect?.let { clampRectToBitmap(it, before.width, before.height) }
+            if (rect == null) {
+                push(PixelEdit(layerId, Rect(0, 0, before.width, before.height), before, after))
+                return
+            }
+            if (BuildConfig.DEBUG) assertRectCoversAllChanges(before, after, rect)
+            val beforeCrop = Bitmap.createBitmap(before, rect.left, rect.top, rect.width(), rect.height())
+            val afterCrop = Bitmap.createBitmap(after, rect.left, rect.top, rect.width(), rect.height())
+            before.recycle()
+            after.recycle()
+            push(PixelEdit(layerId, rect, beforeCrop, afterCrop))
         }
 
         /** Call if the stroke ended up being a no-op (e.g. zero-length tap) to avoid a wasted step. */
@@ -290,7 +384,7 @@ class UndoManager(
 
         /** Call on ACTION_CANCEL to revert whatever partial drawing already hit the layer bitmap. */
         fun rollback(layer: Layer) {
-            layer.restore(before)
+            trace(TraceSections.LAYER_RESTORE) { layer.restore(before) }
             before.recycle()
         }
     }

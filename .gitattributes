@@ -1,0 +1,7 @@
+# Shell scripts, hooks and the frozen-files manifest are executed/parsed by bash on machines that check
+# out with core.autocrlf=true; a CRLF checkout breaks `#!/usr/bin/env bash` ("bash\r: No such file").
+*.sh text eol=lf
+.githooks/* text eol=lf
+scripts/*.sha256 text eol=lf
+scripts/*.json text eol=lf
+scripts/*.py text eol=lf

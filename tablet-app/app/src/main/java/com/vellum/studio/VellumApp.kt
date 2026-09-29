@@ -1,6 +1,7 @@
 package com.vellum.studio
 
 import android.app.Application
+import android.os.StrictMode
 import com.vellum.studio.academy.AcademyProgressRepository
 import com.vellum.studio.model.CustomBrushRepository
 import com.vellum.studio.model.PaletteRepository
@@ -8,6 +9,7 @@ import com.vellum.studio.model.ProjectRepository
 import com.vellum.studio.model.SettingsRepository
 import com.vellum.studio.model.UserPhotoTemplateRepository
 import com.vellum.studio.util.DiagnosticLog
+import com.vellum.studio.util.ProcessExitLog
 import com.vellum.studio.util.RecoveryNotices
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -30,11 +32,16 @@ class VellumApp : Application() {
     override fun onCreate() {
         super.onCreate()
         instance = this
+        installStrictModeIfDebug()
         // Installed before anything else so a crash during the rest of this method's own
         // initialization (repositories are lazy, but a bad first touch of one would still land
         // here) is captured too.
         DiagnosticLog.install(this)
         DiagnosticLog.log(this, "Lifecycle", "App started (${DiagnosticLog.deviceBanner()})")
+        // Why the previous process(es) died, per the OS (API 30+; a no-op on 29): the low-memory kills,
+        // ANRs and native crashes the uncaught-exception handler above can never see. Off the main
+        // thread (it reads trace streams), best-effort, and deduped so a relaunch does not repeat it.
+        CoroutineScope(SupervisorJob() + Dispatchers.IO).launch { ProcessExitLog.logRecentExits(this@VellumApp) }
         // Recently deleted keeps a project for ProjectRepository.TRASH_RETENTION_MS (30 days); this is
         // where older ones are finally removed. Off the main thread (it lists and deletes folders),
         // best-effort (an unpurged entry is simply retried next launch), and it creates nothing when
@@ -43,6 +50,33 @@ class VellumApp : Application() {
             runCatching { repository.purgeExpiredTrash() }
                 .onFailure { DiagnosticLog.log(this@VellumApp, "Lifecycle", "Trash purge failed: ${it.javaClass.simpleName}: ${it.message}") }
         }
+    }
+
+    /**
+     * DEBUG-build-only developer diagnostics: flags disk reads/writes on the main thread and leaked
+     * Closeable/SQLite objects, both LOGGED (`penaltyLog()`), never `penaltyDeath()` -- this is meant
+     * to surface a jank-causing main-thread file read in Logcat during development, not to crash a
+     * release build (or a debug build mid-demo) over something that was already shipping fine. A
+     * release build never even calls [StrictMode.setThreadPolicy]/[StrictMode.setVmPolicy], so it
+     * costs nothing there; `BuildConfig.DEBUG` is the same gate [UndoManager]'s crop-based-undo
+     * correctness net uses for the same "on for every real dev/test run, off in what ships" reason.
+     */
+    private fun installStrictModeIfDebug() {
+        if (!BuildConfig.DEBUG) return
+        StrictMode.setThreadPolicy(
+            StrictMode.ThreadPolicy.Builder()
+                .detectDiskReads()
+                .detectDiskWrites()
+                .penaltyLog()
+                .build()
+        )
+        StrictMode.setVmPolicy(
+            StrictMode.VmPolicy.Builder()
+                .detectLeakedSqlLiteObjects()
+                .detectLeakedClosableObjects()
+                .penaltyLog()
+                .build()
+        )
     }
 
     /**

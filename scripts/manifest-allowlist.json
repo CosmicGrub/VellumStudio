@@ -1,0 +1,58 @@
+{
+  "_comment": "Pinned from the merged RELEASE manifest by scripts/verify_apk.py. A diff here is a deliberate decision: every new permission or exported component is attack surface or a privacy change. Regenerate with `python scripts/verify_apk.py --apk <apk> --build-tools <dir> --write-manifest-allowlist` and review the git diff.",
+  "package": "com.vellum.studio",
+  "usesPermissions": [
+    "android.permission.ACCESS_NETWORK_STATE",
+    "android.permission.ACCESS_WIFI_STATE",
+    "android.permission.INTERNET",
+    "android.permission.NSD",
+    "com.vellum.studio.DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION"
+  ],
+  "declaredPermissions": [
+    "com.vellum.studio.DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION"
+  ],
+  "components": [
+    {
+      "type": "activity",
+      "name": "com.google.android.gms.common.api.GoogleApiActivity",
+      "exported": "false",
+      "permission": null
+    },
+    {
+      "type": "activity",
+      "name": "com.vellum.studio.MainActivity",
+      "exported": "true",
+      "permission": null
+    },
+    {
+      "type": "provider",
+      "name": "androidx.core.content.FileProvider",
+      "exported": "false",
+      "permission": null
+    },
+    {
+      "type": "provider",
+      "name": "androidx.startup.InitializationProvider",
+      "exported": "false",
+      "permission": null
+    },
+    {
+      "type": "provider",
+      "name": "com.google.mlkit.common.internal.MlKitInitProvider",
+      "exported": "false",
+      "permission": null
+    },
+    {
+      "type": "receiver",
+      "name": "androidx.profileinstaller.ProfileInstallReceiver",
+      "exported": "true",
+      "permission": "android.permission.DUMP"
+    },
+    {
+      "type": "service",
+      "name": "com.google.mlkit.common.internal.MlKitComponentDiscoveryService",
+      "exported": "false",
+      "permission": null
+    }
+  ]
+}
