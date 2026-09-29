@@ -96,6 +96,8 @@ import com.vellum.studio.canvas.DrawingCanvasView
 import com.vellum.studio.canvas.ToolMode
 import com.vellum.studio.canvas.gl.CompositorRenderer
 import com.vellum.studio.canvas.gl.LayerCompositorGLView
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import com.vellum.studio.model.CustomBrushRepository
 import com.vellum.studio.model.EditorAutosaver
@@ -109,8 +111,12 @@ import com.vellum.studio.model.SaveStatus
 import com.vellum.studio.model.SettingsRepository
 import com.vellum.studio.network.LiveCanvasBridge
 import com.vellum.studio.ui.colorpicker.ColorPickerPanel
+import com.vellum.studio.util.DiagnosticLog
 import com.vellum.studio.util.ImageImport
 import com.vellum.studio.util.Printing
+import com.vellum.studio.util.SessionVitals
+import com.vellum.studio.util.SessionVitalsReader
+import com.vellum.studio.util.ThermalWatcher
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -375,6 +381,39 @@ fun EditorScreen(
             onDispose {
                 lifecycleOwner.lifecycle.removeObserver(saver.lifecycleObserver)
                 saver.close()
+            }
+        }
+    }
+
+    // Session vitals + thermal watcher: pure observability, scoped to exactly this open editor
+    // session the same way the autosave wiring above is (keyed on `saver`, so a fresh project load
+    // gets a fresh sampler and watcher rather than one leaking across projects). Never reads from or
+    // writes to the canvas/save path itself -- see SessionVitals/ThermalWatcher's own class docs.
+    autosaver?.let { saver ->
+        val sessionVitals = remember(saver) {
+            SessionVitals(
+                scope = scope,
+                readVitals = { SessionVitalsReader.read(context) },
+                log = { line -> DiagnosticLog.log(context, "SessionVitals", line) },
+            )
+        }
+        val thermalWatcher = remember(saver) { ThermalWatcher(context) }
+        DisposableEffect(saver, lifecycleOwner) {
+            sessionVitals.start()
+            thermalWatcher.start()
+            // ON_STOP is the same "last guaranteed moment before the app might be killed" this
+            // item's roadmap entry asks the summary line to land at -- deliberately its own
+            // observer rather than piggybacking on `saver.lifecycleObserver`, since SessionVitals
+            // has nothing to do with EditorAutosaver and one growing to know about the other's
+            // lifecycle hook would be a worse coupling than one extra addObserver call.
+            val vitalsObserver = LifecycleEventObserver { _, event ->
+                if (event == Lifecycle.Event.ON_STOP) sessionVitals.logSessionSummary()
+            }
+            lifecycleOwner.lifecycle.addObserver(vitalsObserver)
+            onDispose {
+                lifecycleOwner.lifecycle.removeObserver(vitalsObserver)
+                sessionVitals.stop()
+                thermalWatcher.stop()
             }
         }
     }

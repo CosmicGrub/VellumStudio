@@ -17,6 +17,8 @@ import com.vellum.studio.canvas.LayerBlendMode
 import com.vellum.studio.canvas.LayerFlattener
 import com.vellum.studio.util.DiagnosticLog
 import com.vellum.studio.util.DurableFile
+import com.vellum.studio.util.TraceSections
+import com.vellum.studio.util.trace
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.CompletableDeferred
@@ -646,7 +648,7 @@ class ProjectRepository internal constructor(private val appContext: Context, pr
         return LoadResult.Unreadable(reason, "${t.javaClass.simpleName}: ${t.message}")
     }
 
-    private fun loadBlocking(id: String): LoadResult {
+    private fun loadBlocking(id: String): LoadResult = trace(TraceSections.PROJECT_LOAD) {
         val meta = when (val read = loadOrRecoverMeta(id)) {
             null -> {
                 DiagnosticLog.log(appContext, "ProjectRepository", "Project $id: nothing on disk to open")
@@ -805,7 +807,7 @@ class ProjectRepository internal constructor(private val appContext: Context, pr
     }
 
     /** Runs on the coordinator's IO thread, under the project lock. Any exception becomes a failed [SaveOutcome] upstream. */
-    private fun runSave(state: ProjectState, plan: SavePlan): SaveOutcome {
+    private fun runSave(state: ProjectState, plan: SavePlan): SaveOutcome = trace(TraceSections.SAVE_PERSIST) {
         val meta = plan.meta
         // Before ANY file is touched (layer PNGs of a newer project would be overwritten too, not
         // just its metadata): refuse to save over a project a newer build wrote.
@@ -861,7 +863,7 @@ class ProjectRepository internal constructor(private val appContext: Context, pr
      * changed, and reused from [ProjectState.thumbs] when it did not -- which is what lets unchanged
      * layers skip snapshotting entirely.
      */
-    private fun writeThumbnail(state: ProjectState, plan: SavePlan) {
+    private fun writeThumbnail(state: ProjectState, plan: SavePlan) = trace(TraceSections.PROJECT_THUMBNAIL) {
         val meta = plan.meta
         val (thumbW, thumbH) = thumbSize(meta.widthPx, meta.heightPx)
         for (cap in plan.layers) {

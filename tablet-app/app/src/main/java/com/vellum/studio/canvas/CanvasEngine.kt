@@ -130,12 +130,15 @@ class CanvasEngine(val widthPx: Int, val heightPx: Int) {
     private var regionMapLayerIndex = -1
     private var regionMapRevision = -1
 
-    // History is bounded by BYTES, not step count (see UndoManager): a pixel step pins two
-    // full-canvas ARGB_8888 bitmaps, a deleted-layer step one, property/move steps almost nothing.
-    // Device-scaled budget (was a flat 180MB regardless of hardware) -- see
-    // DeviceCapabilities.undoBudgetBytes() for why: a higher-RAM device earns real extra undo depth
-    // instead of the same fixed ceiling as a much more constrained one. The 6..60 step clamp is the
-    // old depth clamp: never fewer than 6 undoable steps even on a giant canvas, never more than 60.
+    // History is bounded by BYTES, not step count (see UndoManager): a pixel step pins two crops the
+    // size of whatever the stroke actually touched (see UndoManager.PixelEdit), a deleted-layer step
+    // one full-canvas bitmap, property/move steps almost nothing. Device-scaled budget (was a flat
+    // 180MB regardless of hardware) -- see DeviceCapabilities.undoBudgetBytes() for why: a
+    // higher-RAM device earns real extra undo depth instead of the same fixed ceiling as a much more
+    // constrained one. MIN_UNDO_STEPS is NOT the old depth floor any more (that floor is exactly what
+    // used to defeat the budget -- 6 full-canvas steps at 2048x2048 is ~201MB against an ~80MB
+    // budget); with crops it only exists so one huge fallback/uncropped step can't evict itself.
+    // MAX_UNDO_STEPS caps a long run of now-cheap steps from growing unbounded.
     val undoManager = UndoManager(
         maxDepth = MAX_UNDO_STEPS,
         budgetBytes = DeviceCapabilities.undoBudgetBytes(),
@@ -513,10 +516,15 @@ class CanvasEngine(val widthPx: Int, val heightPx: Int) {
     }
 
     companion object {
-        // Undo step-count clamp (the depth clamp the old computeUndoDepth applied); the byte budget
-        // is what actually bounds memory in between. See UndoManager's eviction note.
-        const val MIN_UNDO_STEPS = 6
-        const val MAX_UNDO_STEPS = 60
+        // MIN_UNDO_STEPS: the newest steps that survive eviction NO MATTER WHAT (see UndoManager's
+        // minKeptSteps) -- just enough that one huge step (an uncropped fallback pixel edit, or a
+        // single removed-layer step) can't evict itself and leave the user with no undo at all, not
+        // a depth floor that beats the byte budget the way the pre-crop code's `coerceIn(6, 60)` did.
+        // MAX_UNDO_STEPS caps step count outright so a long run of now-cheap crop/property/move steps
+        // can't grow unbounded; byte eviction (DeviceCapabilities.undoBudgetBytes()) is what actually
+        // bounds memory the rest of the time. See UndoManager's eviction note.
+        const val MIN_UNDO_STEPS = 1
+        const val MAX_UNDO_STEPS = 200
 
         // Single source of truth for BrushBar's Size/Opacity sliders (see BrushBar.kt) and for
         // EditorScreen's bracket-key/number-key keyboard shortcuts, which need the exact same

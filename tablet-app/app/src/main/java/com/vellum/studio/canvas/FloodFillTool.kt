@@ -1,6 +1,7 @@
 package com.vellum.studio.canvas
 
 import android.graphics.Bitmap
+import android.graphics.Rect
 
 /**
  * Paint-bucket fill implemented as an iterative scanline flood fill: from a seed pixel we walk
@@ -14,6 +15,21 @@ import android.graphics.Bitmap
  */
 object FloodFillTool {
 
+    /**
+     * @param changed whether any pixel was actually modified -- exactly what the old `Boolean`
+     *   return used to mean, kept as its own field (rather than `bounds != null`) so callers reading
+     *   just this one field don't have to reason about the other.
+     * @param bounds the tight bounding box of every pixel the fill touched, in target-bitmap pixel
+     *   coordinates as a half-open rect (`right`/`bottom` exclusive, ready for
+     *   `UndoManager.PendingStroke.commit`'s dirty-rect parameter) -- null iff [changed] is false.
+     *   Exact, not padded: a flood fill writes hard pixel boundaries with no blur/AA to bleed past
+     *   them, unlike a brush stroke.
+     */
+    data class FillResult(val changed: Boolean, val bounds: Rect?)
+
+    /** Back-compat surface: identical to [fillTracked] minus the bounds, for the one existing call
+     * site's tests that only care whether anything changed. Production code should call
+     * [fillTracked] directly so its result's dirty rect can crop the undo step. */
     fun fill(
         target: Bitmap,
         boundary: Bitmap,
@@ -22,12 +38,22 @@ object FloodFillTool {
         fillColorArgb: Int,
         alpha: Float = 1f,
         wallAlphaThreshold: Int = 40,
-    ): Boolean {
+    ): Boolean = fillTracked(target, boundary, startX, startY, fillColorArgb, alpha, wallAlphaThreshold).changed
+
+    fun fillTracked(
+        target: Bitmap,
+        boundary: Bitmap,
+        startX: Int,
+        startY: Int,
+        fillColorArgb: Int,
+        alpha: Float = 1f,
+        wallAlphaThreshold: Int = 40,
+    ): FillResult {
         val width = target.width
         val height = target.height
 
-        if (boundary.width != width || boundary.height != height) return false
-        if (startX < 0 || startX >= width || startY < 0 || startY >= height) return false
+        if (boundary.width != width || boundary.height != height) return FillResult(false, null)
+        if (startX < 0 || startX >= width || startY < 0 || startY >= height) return FillResult(false, null)
 
         // Pull the boundary layer's pixels once; only its alpha channel matters, used purely as
         // a read-only "is this pixel a wall" mask.
@@ -38,7 +64,7 @@ object FloodFillTool {
             ((boundaryPixels[y * width + x] ushr 24) and 0xFF) >= wallAlphaThreshold
 
         // Tapped directly on a line - nothing to do.
-        if (isWall(startX, startY)) return false
+        if (isWall(startX, startY)) return FillResult(false, null)
 
         // Pull target's pixels once; this is the buffer we mutate in place and write back at the
         // very end via a single setPixels call.
@@ -101,6 +127,13 @@ object FloodFillTool {
         }
 
         var modified = false
+        // Tight bounding box of every span actually painted -- min/max maintained alongside the
+        // fill itself rather than re-scanning `visited` afterward, so tracking it costs nothing
+        // beyond four comparisons per span.
+        var minX = Int.MAX_VALUE
+        var minY = Int.MAX_VALUE
+        var maxX = Int.MIN_VALUE
+        var maxY = Int.MIN_VALUE
 
         while (stack.isNotEmpty()) {
             val seed = stack.removeLast()
@@ -123,6 +156,10 @@ object FloodFillTool {
                 targetPixels[idx] = compositeOver(targetPixels[idx])
             }
             modified = true
+            if (lx < minX) minX = lx
+            if (rx > maxX) maxX = rx
+            if (sy < minY) minY = sy
+            if (sy > maxY) maxY = sy
 
             seedAdjacentRow(lx, rx, sy - 1)
             seedAdjacentRow(lx, rx, sy + 1)
@@ -131,6 +168,7 @@ object FloodFillTool {
         if (modified) {
             target.setPixels(targetPixels, 0, width, 0, 0, width, height)
         }
-        return modified
+        // maxX/maxY are inclusive column/row indices; the returned Rect is half-open, so +1.
+        return FillResult(modified, if (modified) Rect(minX, minY, maxX + 1, maxY + 1) else null)
     }
 }

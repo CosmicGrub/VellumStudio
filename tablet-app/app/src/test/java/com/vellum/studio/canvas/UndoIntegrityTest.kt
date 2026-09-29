@@ -15,6 +15,7 @@ import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.RuntimeEnvironment
 import org.robolectric.annotation.Config
+import org.robolectric.annotation.GraphicsMode
 
 /**
  * Regression tests for the "undo integrity quick fixes" (Wave 1): undo/redo running while a stylus
@@ -26,9 +27,16 @@ import org.robolectric.annotation.Config
  * set by [VellumApp.onCreate]) -- same reason ProjectRepositoryTest does. Layers are tiny bitmaps and
  * a "stroke" is an in-place eraseColor, exactly like UndoManagerTest, so a single getPixel tells
  * which snapshot an undo/redo actually restored.
+ *
+ * `@GraphicsMode(NATIVE)`: the selection-move tests below drive a REAL
+ * [DrawingCanvasView.commitSelectionMove], which since crop-based undo (this item) crops/restores
+ * real bitmap rects (`Bitmap.createBitmap(src, x, y, w, h)`, `Layer.restoreRect`) rather than a
+ * whole-bitmap copy -- the legacy shadow does not reliably round-trip that, same reasoning as
+ * DrawingCanvasViewInputRoutingTest's own doc comment.
  */
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [33], application = VellumApp::class)
+@GraphicsMode(GraphicsMode.Mode.NATIVE)
 class UndoIntegrityTest {
 
     private val size = 64
