@@ -2,6 +2,8 @@ package com.vellum.studio.canvas
 
 import android.graphics.Bitmap
 import android.graphics.BlendMode
+import android.graphics.Paint
+import android.graphics.Rect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -102,6 +104,34 @@ class Layer(
         val canvas = android.graphics.Canvas(bitmap)
         canvas.drawBitmap(snapshot, 0f, 0f, null)
         bumpVersion()
+    }
+
+    /**
+     * Restores a rectangular region of [bitmap] from [patch] -- the crop-based undo counterpart to
+     * [restore] (see [UndoManager]'s `PixelEdit`, the only caller). [patch] must be exactly
+     * [rect]'s size and [rect] must already lie within this layer's bounds; both are guaranteed by
+     * the caller (the rect was intersected against the canvas, and the patch was cropped from a
+     * full-size snapshot with that same rect, before either was ever stored).
+     *
+     * Uses [BlendMode.SRC], not the default SRC_OVER a plain `drawBitmap(..., null)` would use --
+     * SRC_OVER can only ever add/darken alpha, so it could never restore a region back to fully (or
+     * partially) transparent content the patch captured. [restore] gets this for free by first
+     * erasing the WHOLE bitmap, which a per-rect restore must not do (that would wipe every pixel
+     * this step doesn't own).
+     */
+    fun restoreRect(rect: Rect, patch: Bitmap) {
+        require(patch.width == rect.width() && patch.height == rect.height()) {
+            "restoreRect: patch ${patch.width}x${patch.height} does not match rect $rect"
+        }
+        val canvas = android.graphics.Canvas(bitmap)
+        canvas.drawBitmap(patch, rect.left.toFloat(), rect.top.toFloat(), RESTORE_RECT_PAINT)
+        bumpVersion()
+    }
+
+    private companion object {
+        /** Shared across every [restoreRect] call -- stateless (just a blend mode), so one Paint
+         * instance is safe to reuse rather than allocating one per undo/redo. */
+        val RESTORE_RECT_PAINT = Paint().apply { blendMode = BlendMode.SRC }
     }
 }
 

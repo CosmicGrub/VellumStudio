@@ -40,7 +40,6 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.core.content.FileProvider
-import com.vellum.studio.BuildConfig
 import com.vellum.studio.canvas.PressureCurvePreset
 import com.vellum.studio.canvas.PressureCurveRange
 import com.vellum.studio.model.SettingsRepository
@@ -74,7 +73,7 @@ fun SettingsScreen(settingsRepository: SettingsRepository, onBack: () -> Unit) {
             verticalArrangement = Arrangement.spacedBy(16.dp),
         ) {
             SettingsCard(title = "About") {
-                Text("Vellum Studio ${BuildConfig.VERSION_NAME}", style = MaterialTheme.typography.bodyMedium)
+                Text("Vellum Studio ${DiagnosticLog.buildIdentity()}", style = MaterialTheme.typography.bodyMedium)
                 Text(
                     "A high-fidelity S Pen drawing app: pressure- and tilt-sensitive brushes, layers with full blend modes, " +
                         "bounded undo history, and a Wi-Fi bridge to a PC companion app.",

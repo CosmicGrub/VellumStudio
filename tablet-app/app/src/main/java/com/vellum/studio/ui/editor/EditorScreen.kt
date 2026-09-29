@@ -1,6 +1,5 @@
 package com.vellum.studio.ui.editor
 
-import android.graphics.BitmapFactory
 import android.view.DragEvent
 import android.view.View
 import androidx.activity.compose.BackHandler
@@ -104,6 +103,8 @@ import com.vellum.studio.canvas.SymmetryMode
 import com.vellum.studio.canvas.ToolMode
 import com.vellum.studio.canvas.gl.CompositorRenderer
 import com.vellum.studio.canvas.gl.LayerCompositorGLView
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import com.vellum.studio.model.CustomBrushRepository
 import com.vellum.studio.model.EditorAutosaver
@@ -117,8 +118,13 @@ import com.vellum.studio.model.SaveStatus
 import com.vellum.studio.model.SettingsRepository
 import com.vellum.studio.network.LiveCanvasBridge
 import com.vellum.studio.ui.colorpicker.ColorPickerPanel
+import com.vellum.studio.util.DiagnosticLog
 import com.vellum.studio.util.FoldPosture
+import com.vellum.studio.util.ImageImport
 import com.vellum.studio.util.Printing
+import com.vellum.studio.util.SessionVitals
+import com.vellum.studio.util.SessionVitalsReader
+import com.vellum.studio.util.ThermalWatcher
 import com.vellum.studio.util.primaryPaneWeightForHingeAngle
 import com.vellum.studio.util.rememberFoldState
 import kotlinx.coroutines.Dispatchers
@@ -386,6 +392,39 @@ fun EditorScreen(
             onDispose {
                 lifecycleOwner.lifecycle.removeObserver(saver.lifecycleObserver)
                 saver.close()
+            }
+        }
+    }
+
+    // Session vitals + thermal watcher: pure observability, scoped to exactly this open editor
+    // session the same way the autosave wiring above is (keyed on `saver`, so a fresh project load
+    // gets a fresh sampler and watcher rather than one leaking across projects). Never reads from or
+    // writes to the canvas/save path itself -- see SessionVitals/ThermalWatcher's own class docs.
+    autosaver?.let { saver ->
+        val sessionVitals = remember(saver) {
+            SessionVitals(
+                scope = scope,
+                readVitals = { SessionVitalsReader.read(context) },
+                log = { line -> DiagnosticLog.log(context, "SessionVitals", line) },
+            )
+        }
+        val thermalWatcher = remember(saver) { ThermalWatcher(context) }
+        DisposableEffect(saver, lifecycleOwner) {
+            sessionVitals.start()
+            thermalWatcher.start()
+            // ON_STOP is the same "last guaranteed moment before the app might be killed" this
+            // item's roadmap entry asks the summary line to land at -- deliberately its own
+            // observer rather than piggybacking on `saver.lifecycleObserver`, since SessionVitals
+            // has nothing to do with EditorAutosaver and one growing to know about the other's
+            // lifecycle hook would be a worse coupling than one extra addObserver call.
+            val vitalsObserver = LifecycleEventObserver { _, event ->
+                if (event == Lifecycle.Event.ON_STOP) sessionVitals.logSessionSummary()
+            }
+            lifecycleOwner.lifecycle.addObserver(vitalsObserver)
+            onDispose {
+                lifecycleOwner.lifecycle.removeObserver(vitalsObserver)
+                sessionVitals.stop()
+                thermalWatcher.stop()
             }
         }
     }
@@ -854,17 +893,20 @@ internal fun CanvasSurface(
                         // DragEvent is still valid, not after hopping to a coroutine.
                         (context as? android.app.Activity)?.requestDragAndDropPermissions(event)
                         scope.launch {
-                            val bitmap = withContext(Dispatchers.IO) {
-                                runCatching {
-                                    context.contentResolver.openInputStream(uri)
-                                        ?.use { BitmapFactory.decodeStream(it) }
-                                }.getOrNull()
+                            // Same shared oriented, bounded decode as the Layers-panel picker (see
+                            // util/ImageImport): the raw BitmapFactory.decodeStream this replaced
+                            // ignored EXIF orientation (a portrait cross-app drag came in sideways),
+                            // had no size cap, and left an alpha PNG's transparent areas black.
+                            val result = withContext(Dispatchers.IO) {
+                                ImageImport.decode(context, uri, ImageImport.referenceLongEdge(engine.widthPx, engine.heightPx))
                             }
-                            if (bitmap != null) {
-                                engine.addImageLayer("Reference", bitmap)
-                                onMessage("Reference image added as a new layer")
-                            } else {
-                                onMessage("Couldn't import the dropped image")
+                            when (result) {
+                                is ImageImport.Result.Decoded -> {
+                                    engine.addImageLayer("Reference", result.bitmap)
+                                    result.bitmap.recycle() // addImageLayer copies into its own bitmap
+                                    onMessage("Reference image added as a new layer")
+                                }
+                                is ImageImport.Result.Failed -> onMessage(result.message)
                             }
                         }
                         true

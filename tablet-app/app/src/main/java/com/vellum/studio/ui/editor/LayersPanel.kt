@@ -1,7 +1,6 @@
 package com.vellum.studio.ui.editor
 
 import android.graphics.Bitmap
-import android.graphics.BitmapFactory
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
@@ -58,6 +57,7 @@ import com.vellum.studio.canvas.CanvasEngine
 import com.vellum.studio.canvas.Layer
 import com.vellum.studio.canvas.LayerBlendMode
 import com.vellum.studio.canvas.PoseOverlay
+import com.vellum.studio.util.ImageImport
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -115,13 +115,20 @@ fun LayersPanel(
         if (uri == null || importing) return@rememberLauncherForActivityResult
         importing = true
         scope.launch {
-            val bitmap = withContext(Dispatchers.IO) {
-                runCatching {
-                    context.contentResolver.openInputStream(uri)?.use { BitmapFactory.decodeStream(it) }
-                }.getOrNull()
+            // Shared oriented decode (EXIF-rotated, capped to 2x the canvas long edge, software
+            // sRGB). Alpha is kept: a transparent PNG becomes a layer with a transparent background.
+            val result = withContext(Dispatchers.IO) {
+                ImageImport.decode(context, uri, ImageImport.referenceLongEdge(engine.widthPx, engine.heightPx))
             }
-            if (bitmap != null) {
-                engine.addImageLayer("Reference", bitmap)
+            when (result) {
+                is ImageImport.Result.Decoded -> {
+                    engine.addImageLayer("Reference", result.bitmap)
+                    // addImageLayer draws it into its own canvas-sized bitmap and keeps no reference,
+                    // so free the decoded copy now rather than leaving it native until GC.
+                    result.bitmap.recycle()
+                }
+                // This path used to fail silently (the drop path already told the user).
+                is ImageImport.Result.Failed -> onMessage(result.message)
             }
             importing = false
         }
